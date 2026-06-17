@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -48,7 +47,6 @@ type rssItem struct {
 	Description string `xml:"description"`
 	Source      struct {
 		Name string `xml:",chardata"`
-		URL  string `xml:"url,attr"`
 	} `xml:"source"`
 }
 
@@ -93,23 +91,9 @@ func (it rssItem) toArticle() news.Article {
 		Title:       strings.TrimSpace(html.UnescapeString(it.Title)),
 		Link:        strings.TrimSpace(it.Link),
 		Source:      strings.TrimSpace(it.Source.Name),
-		Image:       logoURL(it.Source.URL),
 		Summary:     summarize(it.Description),
 		PublishedAt: parsePubDate(it.PubDate),
 	}
-}
-
-// logoURL derives a publisher logo from the source homepage via Google's
-// favicon service, which always returns an image (no broken thumbnails).
-func logoURL(sourceURL string) string {
-	host := strings.TrimSpace(sourceURL)
-	if host == "" {
-		return ""
-	}
-	if u, err := url.Parse(host); err == nil && u.Host != "" {
-		host = u.Host
-	}
-	return "https://www.google.com/s2/favicons?sz=128&domain=" + url.QueryEscape(host)
 }
 
 // articleID is a stable, URL-safe id derived from the guid (or link).

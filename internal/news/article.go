@@ -10,7 +10,6 @@ type Article struct {
 	Title       string     `json:"title"`
 	Link        string     `json:"link"`   // URL of the original article (the source site)
 	Source      string     `json:"source"` // publisher name, e.g. "Digi Sport"
-	Image       string     `json:"image"`  // publisher logo URL (favicon service)
 	Summary     string     `json:"summary"`
 	PublishedAt *time.Time `json:"publishedAt"`
 }

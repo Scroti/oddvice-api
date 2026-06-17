@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -57,9 +56,6 @@ func TestLatest_ParsesAndMaps(t *testing.T) {
 	}
 	if a.ID == "" {
 		t.Error("expected a non-empty id")
-	}
-	if !strings.Contains(a.Image, "digisport.ro") {
-		t.Errorf("expected logo url derived from source domain, got %q", a.Image)
 	}
 	if a.PublishedAt == nil || a.PublishedAt.Year() != 2026 {
 		t.Errorf("pubDate not parsed: %v", a.PublishedAt)
