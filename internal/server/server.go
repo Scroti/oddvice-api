@@ -8,6 +8,8 @@ import (
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/thesportsdb"
+	"github.com/oddvice/api/internal/news"
+	"github.com/oddvice/api/internal/news/googlenews"
 )
 
 // Version is the API version, overridable at build time via -ldflags.
@@ -46,8 +48,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // registerFeatures builds and mounts the feature modules.
 func registerFeatures(mux *http.ServeMux, cfg config.Config, logger *slog.Logger) {
-	httpClient := &http.Client{Timeout: cfg.Football.Timeout}
-	provider := thesportsdb.New(cfg.Football.BaseURL, cfg.Football.APIKey, httpClient)
-	footballSvc := football.NewService(provider)
-	football.NewHandler(footballSvc, logger).Register(mux)
+	// Football
+	footballClient := &http.Client{Timeout: cfg.Football.Timeout}
+	footballProvider := thesportsdb.New(cfg.Football.BaseURL, cfg.Football.APIKey, footballClient)
+	football.NewHandler(football.NewService(footballProvider), logger).Register(mux)
+
+	// News
+	newsClient := &http.Client{Timeout: cfg.News.Timeout}
+	newsProvider := googlenews.New(cfg.News.FeedURL, cfg.News.Limit, newsClient)
+	news.NewHandler(news.NewService(newsProvider), logger).Register(mux)
 }
