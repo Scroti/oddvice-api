@@ -22,6 +22,22 @@ func NewHandler(svc *Service, logger *slog.Logger) *Handler {
 // Register attaches the feature's routes to the mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/football/matches/search", h.searchMatches)
+	mux.HandleFunc("GET /api/v1/football/matches/{id}", h.getMatch)
+}
+
+func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	match, found, err := h.svc.GetMatch(r.Context(), id)
+	if err != nil {
+		h.logger.Error("get match failed", "id", id, "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "football provider request failed")
+		return
+	}
+	if !found {
+		httpx.WriteError(w, http.StatusNotFound, "match not found")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, match)
 }
 
 type searchResponse struct {

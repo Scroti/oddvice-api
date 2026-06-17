@@ -18,4 +18,7 @@ type Match struct {
 	Venue     string     `json:"venue,omitempty"`
 	KickoffAt *time.Time `json:"kickoffAt"` // nil when unknown
 	Thumbnail string     `json:"thumbnail,omitempty"`
+	HomeBadge string     `json:"homeBadge,omitempty"`
+	AwayBadge string     `json:"awayBadge,omitempty"`
+	Video     string     `json:"video,omitempty"` // highlights URL (e.g. YouTube)
 }

@@ -48,13 +48,21 @@ type eventDTO struct {
 	StrStatus    string `json:"strStatus"`
 	DateEvent    string `json:"dateEvent"`
 	StrTime      string `json:"strTime"`
-	StrTimestamp string `json:"strTimestamp"`
-	StrVenue     string `json:"strVenue"`
-	StrThumb     string `json:"strThumb"`
+	StrTimestamp     string `json:"strTimestamp"`
+	StrVenue         string `json:"strVenue"`
+	StrThumb         string `json:"strThumb"`
+	StrHomeTeamBadge string `json:"strHomeTeamBadge"`
+	StrAwayTeamBadge string `json:"strAwayTeamBadge"`
+	StrVideo         string `json:"strVideo"`
 }
 
 type searchEventsResponse struct {
 	Event []eventDTO `json:"event"`
+}
+
+// lookupEventResponse: lookupevent.php returns the array under "events".
+type lookupEventResponse struct {
+	Events []eventDTO `json:"events"`
 }
 
 // SearchMatches searches events by name (e.g. "Arsenal vs Chelsea").
@@ -91,6 +99,35 @@ func (c *Client) SearchMatches(ctx context.Context, query string) ([]football.Ma
 	return matches, nil
 }
 
+// GetMatch looks up a single event by id. The bool is false when not found.
+func (c *Client) GetMatch(ctx context.Context, id string) (football.Match, bool, error) {
+	endpoint := fmt.Sprintf("%s/api/v1/json/%s/lookupevent.php?id=%s", c.baseURL, c.apiKey, url.QueryEscape(id))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return football.Match{}, false, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return football.Match{}, false, fmt.Errorf("call provider: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return football.Match{}, false, fmt.Errorf("provider returned status %d", resp.StatusCode)
+	}
+
+	var payload lookupEventResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return football.Match{}, false, fmt.Errorf("decode provider response: %w", err)
+	}
+	if len(payload.Events) == 0 {
+		return football.Match{}, false, nil
+	}
+	return payload.Events[0].toMatch(), true, nil
+}
+
 func (e eventDTO) toMatch() football.Match {
 	return football.Match{
 		ID:        e.IDEvent,
@@ -105,6 +142,9 @@ func (e eventDTO) toMatch() football.Match {
 		Venue:     e.StrVenue,
 		KickoffAt: parseKickoff(e.StrTimestamp, e.DateEvent, e.StrTime),
 		Thumbnail: e.StrThumb,
+		HomeBadge: e.StrHomeTeamBadge,
+		AwayBadge: e.StrAwayTeamBadge,
+		Video:     e.StrVideo,
 	}
 }
 

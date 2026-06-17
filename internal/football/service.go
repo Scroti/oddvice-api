@@ -14,6 +14,7 @@ var ErrEmptyQuery = errors.New("query must not be empty")
 // this interface and nothing else.
 type Provider interface {
 	SearchMatches(ctx context.Context, query string) ([]Match, error)
+	GetMatch(ctx context.Context, id string) (Match, bool, error)
 }
 
 // Service holds the football business logic.
@@ -33,4 +34,9 @@ func (s *Service) SearchMatches(ctx context.Context, query string) ([]Match, err
 		return nil, ErrEmptyQuery
 	}
 	return s.provider.SearchMatches(ctx, query)
+}
+
+// GetMatch returns a single match by id. The bool is false when not found.
+func (s *Service) GetMatch(ctx context.Context, id string) (Match, bool, error) {
+	return s.provider.GetMatch(ctx, strings.TrimSpace(id))
 }
