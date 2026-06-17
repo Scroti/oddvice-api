@@ -17,16 +17,23 @@ Or with the Makefile: `make run`, `make test`, `make build`.
 
 ## Endpoints
 
-| Method | Path               | Description              |
-| ------ | ------------------ | ------------------------ |
-| GET    | `/healthz`         | Liveness probe           |
-| GET    | `/readyz`          | Readiness probe          |
-| GET    | `/api/v1/version`  | Service version + env    |
-| GET    | `/api/v1/ping`     | Returns `{"message":"pong"}` |
+| Method | Path                                  | Description                       |
+| ------ | ------------------------------------- | --------------------------------- |
+| GET    | `/healthz`                            | Liveness probe                    |
+| GET    | `/readyz`                             | Readiness probe                   |
+| GET    | `/api/v1/version`                     | Service version + env             |
+| GET    | `/api/v1/ping`                        | Returns `{"message":"pong"}`      |
+| GET    | `/api/v1/football/matches/search?q=`  | Search football matches by name   |
 
 ```bash
 curl localhost:8080/healthz
+curl "localhost:8080/api/v1/football/matches/search?q=Arsenal%20vs%20Chelsea"
 ```
+
+The football endpoint proxies **[TheSportsDB](https://www.thesportsdb.com)**'s
+free API (public test key `3`, no signup). Swap providers by implementing
+`football.Provider` in a new sub-package — the domain model, service, and HTTP
+handler stay unchanged.
 
 ## Configuration
 
@@ -42,10 +49,18 @@ Environment variables (see `.env.example`):
 ## Layout
 
 ```
-cmd/server/         entrypoint (graceful shutdown)
-internal/config/    env-based configuration
-internal/server/    routing, handlers, middleware, JSON helpers
+cmd/server/                    entrypoint (graceful shutdown)
+internal/config/               env-based configuration
+internal/httpx/                shared JSON response helpers
+internal/server/               transport: router, middleware, system handlers
+internal/football/             feature: domain model + Service + Provider iface
+internal/football/thesportsdb/ Provider implementation (free, keyless)
 ```
+
+Layering: `server` wires `config → provider → service → handler`. The
+`football` package owns the domain and a `Provider` interface; concrete
+providers (e.g. `thesportsdb`) depend on `football`, never the reverse — so
+swapping the data source is a one-package change.
 
 Middleware chain (outermost first): **recover → request-id → logging → CORS**.
 

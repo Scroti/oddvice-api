@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"slices"
 	"time"
+
+	"github.com/oddvice/api/internal/httpx"
 )
 
 type middleware func(http.Handler) http.Handler
@@ -68,7 +70,7 @@ func recoverMiddleware(logger *slog.Logger) middleware {
 			defer func() {
 				if rec := recover(); rec != nil {
 					logger.Error("panic recovered", "error", rec, "path", r.URL.Path)
-					writeError(w, http.StatusInternalServerError, "internal server error")
+					httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 				}
 			}()
 			next.ServeHTTP(w, r)
