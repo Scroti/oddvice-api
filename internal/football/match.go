@@ -22,3 +22,8 @@ type Match struct {
 	AwayBadge string     `json:"awayBadge,omitempty"`
 	Video     string     `json:"video,omitempty"` // highlights URL (e.g. YouTube)
 }
+
+// Played reports whether the match has a full-time score.
+func (m Match) Played() bool {
+	return m.HomeScore != nil && m.AwayScore != nil
+}

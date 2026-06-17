@@ -1,7 +1,6 @@
 package football
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -19,10 +18,48 @@ func NewHandler(svc *Service, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, logger: logger}
 }
 
-// Register attaches the feature's routes to the mux.
+// Register attaches the feature's routes to the mux. Literal segments
+// (search/upcoming/results) take precedence over the {id} wildcard.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/football/matches/search", h.searchMatches)
+	mux.HandleFunc("GET /api/v1/football/matches", h.list)
+	mux.HandleFunc("GET /api/v1/football/matches/search", h.search)
+	mux.HandleFunc("GET /api/v1/football/matches/upcoming", h.upcoming)
+	mux.HandleFunc("GET /api/v1/football/matches/results", h.results)
 	mux.HandleFunc("GET /api/v1/football/matches/{id}", h.getMatch)
+}
+
+type listResponse struct {
+	Count   int     `json:"count"`
+	Matches []Match `json:"matches"`
+}
+
+func (h *Handler) respondList(w http.ResponseWriter, matches []Match, err error, ctx string) {
+	if err != nil {
+		h.logger.Error("football "+ctx+" failed", "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "football provider request failed")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, listResponse{Count: len(matches), Matches: matches})
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	matches, err := h.svc.All(r.Context())
+	h.respondList(w, matches, err, "list")
+}
+
+func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
+	matches, err := h.svc.Search(r.Context(), r.URL.Query().Get("q"))
+	h.respondList(w, matches, err, "search")
+}
+
+func (h *Handler) upcoming(w http.ResponseWriter, r *http.Request) {
+	matches, err := h.svc.Upcoming(r.Context(), 20)
+	h.respondList(w, matches, err, "upcoming")
+}
+
+func (h *Handler) results(w http.ResponseWriter, r *http.Request) {
+	matches, err := h.svc.Results(r.Context(), 20)
+	h.respondList(w, matches, err, "results")
 }
 
 func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
@@ -38,32 +75,4 @@ func (h *Handler) getMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, match)
-}
-
-type searchResponse struct {
-	Query   string  `json:"query"`
-	Count   int     `json:"count"`
-	Matches []Match `json:"matches"`
-}
-
-// searchMatches handles GET /api/v1/football/matches/search?q=...
-func (h *Handler) searchMatches(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-
-	matches, err := h.svc.SearchMatches(r.Context(), query)
-	switch {
-	case errors.Is(err, ErrEmptyQuery):
-		httpx.WriteError(w, http.StatusBadRequest, "missing required query parameter 'q'")
-		return
-	case err != nil:
-		h.logger.Error("football search failed", "query", query, "error", err)
-		httpx.WriteError(w, http.StatusBadGateway, "football provider request failed")
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, searchResponse{
-		Query:   query,
-		Count:   len(matches),
-		Matches: matches,
-	})
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
-	"github.com/oddvice/api/internal/football/thesportsdb"
+	"github.com/oddvice/api/internal/football/footballdata"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
 )
@@ -48,9 +48,15 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // registerFeatures builds and mounts the feature modules.
 func registerFeatures(mux *http.ServeMux, cfg config.Config, logger *slog.Logger) {
-	// Football
+	// Football (football-data.org)
 	footballClient := &http.Client{Timeout: cfg.Football.Timeout}
-	footballProvider := thesportsdb.New(cfg.Football.BaseURL, cfg.Football.APIKey, footballClient)
+	footballProvider := footballdata.New(
+		cfg.Football.BaseURL,
+		cfg.Football.APIKey,
+		cfg.Football.Competition,
+		cfg.Football.CacheTTL,
+		footballClient,
+	)
 	football.NewHandler(football.NewService(footballProvider), logger).Register(mux)
 
 	// News

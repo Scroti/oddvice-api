@@ -18,11 +18,13 @@ type Config struct {
 	News           News     // news feed provider settings
 }
 
-// Football configures the external football data provider.
+// Football configures the football-data.org provider.
 type Football struct {
-	BaseURL string        // provider base URL
-	APIKey  string        // provider API key ("3" is TheSportsDB's free test key)
-	Timeout time.Duration // per-request timeout for upstream calls
+	APIKey      string        // football-data.org API token
+	BaseURL     string        // API base URL
+	Competition string        // competition code, e.g. "WC" (FIFA World Cup)
+	Timeout     time.Duration // per-request timeout
+	CacheTTL    time.Duration // how long to cache the match list (rate limits)
 }
 
 // News configures the external news feed provider.
@@ -43,9 +45,11 @@ func Load() Config {
 		Port:           getenv("PORT", "8080"),
 		AllowedOrigins: splitAndTrim(getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		Football: Football{
-			BaseURL: getenv("FOOTBALL_API_BASE_URL", "https://www.thesportsdb.com"),
-			APIKey:  getenv("FOOTBALL_API_KEY", "3"),
-			Timeout: getduration("FOOTBALL_API_TIMEOUT_SECONDS", 10*time.Second),
+			APIKey:      getenv("FOOTBALL_DATA_API_KEY", ""),
+			BaseURL:     getenv("FOOTBALL_DATA_BASE_URL", "https://api.football-data.org"),
+			Competition: getenv("FOOTBALL_COMPETITION", "WC"),
+			Timeout:     getduration("FOOTBALL_TIMEOUT_SECONDS", 12*time.Second),
+			CacheTTL:    getduration("FOOTBALL_CACHE_SECONDS", 120*time.Second),
 		},
 		News: News{
 			FeedURL: getenv("NEWS_FEED_URL", defaultNewsFeed),
