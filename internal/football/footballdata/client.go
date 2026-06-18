@@ -1,18 +1,29 @@
 // Package footballdata implements football.Provider against football-data.org,
 // which covers the FIFA World Cup with real crests, scores and fixtures.
+//
+// The free tier is rate-limited (≈10 requests/minute), so the client:
+//   - caches the full match list and serves every view (list/upcoming/results/
+//     search/detail) from it, making ~1 upstream call per cache window;
+//   - honours the API's throttling headers (X-Requests-Available-Minute,
+//     X-RequestCounter-Reset) and backs off (serving stale) when low or 429'd.
 package footballdata
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/oddvice/api/internal/football"
 )
+
+// errThrottled is returned when we're in a rate-limit cooldown window.
+var errThrottled = errors.New("football-data.org rate limit reached")
 
 // Client talks to football-data.org and maps its DTOs to the domain model.
 type Client struct {
@@ -22,9 +33,10 @@ type Client struct {
 	competition string
 	cacheTTL    time.Duration
 
-	mu       sync.Mutex
-	cached   []football.Match
-	cachedAt time.Time
+	mu            sync.Mutex
+	cached        []football.Match
+	cachedAt      time.Time
+	cooldownUntil time.Time // don't call upstream before this (rate limit)
 }
 
 // New builds a Client. A nil httpClient gets a default one.
@@ -45,12 +57,12 @@ func New(baseURL, apiKey, competition string, cacheTTL time.Duration, httpClient
 }
 
 type matchDTO struct {
-	ID       int    `json:"id"`
-	UTCDate  string `json:"utcDate"`
-	Status   string `json:"status"`
-	Stage    string `json:"stage"`
-	Group    string `json:"group"`
-	Venue    string `json:"venue"`
+	ID       int     `json:"id"`
+	UTCDate  string  `json:"utcDate"`
+	Status   string  `json:"status"`
+	Stage    string  `json:"stage"`
+	Group    string  `json:"group"`
+	Venue    string  `json:"venue"`
 	HomeTeam teamDTO `json:"homeTeam"`
 	AwayTeam teamDTO `json:"awayTeam"`
 	Score    struct {
@@ -71,7 +83,7 @@ type matchesResponse struct {
 }
 
 // Matches returns all matches of the configured competition, cached to respect
-// the API rate limit. Stale cache is served if a refresh fails.
+// the API rate limit. Stale cache is served if a refresh fails or is throttled.
 func (c *Client) Matches(ctx context.Context) ([]football.Match, error) {
 	c.mu.Lock()
 	fresh := c.cached != nil && time.Since(c.cachedAt) < c.cacheTTL
@@ -85,7 +97,7 @@ func (c *Client) Matches(ctx context.Context) ([]football.Match, error) {
 	var payload matchesResponse
 	if err := c.get(ctx, endpoint, &payload); err != nil {
 		if cached != nil {
-			return cached, nil // serve stale on failure (e.g. rate limit)
+			return cached, nil // serve stale on failure / throttle
 		}
 		return nil, err
 	}
@@ -101,20 +113,50 @@ func (c *Client) Matches(ctx context.Context) ([]football.Match, error) {
 	return matches, nil
 }
 
-// GetMatch looks up a single match by id. The bool is false when not found.
+// GetMatch returns a single match. It first looks in the cached competition
+// list (no extra upstream call); only a truly unknown id triggers a direct
+// lookup. The bool is false when not found.
 func (c *Client) GetMatch(ctx context.Context, id string) (football.Match, bool, error) {
-	endpoint := fmt.Sprintf("%s/v4/matches/%s", c.baseURL, id)
-	var m matchDTO
-	if err := c.get(ctx, endpoint, &m); err != nil {
-		return football.Match{}, false, err
+	matches, listErr := c.Matches(ctx)
+	if listErr == nil {
+		for _, m := range matches {
+			if m.ID == id {
+				return m, true, nil
+			}
+		}
 	}
-	if m.ID == 0 {
+
+	// Fallback: direct lookup for an id outside the cached competition.
+	var dto matchDTO
+	if err := c.get(ctx, fmt.Sprintf("%s/v4/matches/%s", c.baseURL, id), &dto); err != nil {
+		if listErr != nil {
+			return football.Match{}, false, err
+		}
+		return football.Match{}, false, nil // list was fine, id just not found
+	}
+	if dto.ID == 0 {
 		return football.Match{}, false, nil
 	}
-	return m.toMatch(), true, nil
+	return dto.toMatch(), true, nil
+}
+
+func (c *Client) inCooldown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Before(c.cooldownUntil)
+}
+
+func (c *Client) setCooldown(until time.Time) {
+	c.mu.Lock()
+	c.cooldownUntil = until
+	c.mu.Unlock()
 }
 
 func (c *Client) get(ctx context.Context, url string, dst any) error {
+	if c.inCooldown() {
+		return errThrottled
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -127,6 +169,21 @@ func (c *Client) get(ctx context.Context, url string, dst any) error {
 		return fmt.Errorf("call provider: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Honour the throttling headers: if we're out of requests (or got 429),
+	// pause upstream calls until the counter resets.
+	reset := atoiHeader(resp.Header.Get("X-RequestCounter-Reset"))
+	avail, availSet := atoiHeaderOK(resp.Header.Get("X-Requests-Available-Minute"))
+	if resp.StatusCode == http.StatusTooManyRequests || (availSet && avail <= 0) {
+		wait := time.Duration(reset) * time.Second
+		if wait <= 0 {
+			wait = time.Minute
+		}
+		c.setCooldown(time.Now().Add(wait))
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return errThrottled
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("provider returned status %d", resp.StatusCode)
 	}
@@ -134,6 +191,20 @@ func (c *Client) get(ctx context.Context, url string, dst any) error {
 		return fmt.Errorf("decode provider response: %w", err)
 	}
 	return nil
+}
+
+func atoiHeader(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
+func atoiHeaderOK(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	return n, err == nil
 }
 
 func (m matchDTO) toMatch() football.Match {
