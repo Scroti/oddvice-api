@@ -12,6 +12,8 @@ type Provider interface {
 	Matches(ctx context.Context) ([]Match, error)
 	// GetMatch returns a single match by id (found=false when missing).
 	GetMatch(ctx context.Context, id string) (Match, bool, error)
+	// Standings returns the group/league tables.
+	Standings(ctx context.Context) ([]Group, error)
 }
 
 // Service holds the football business logic, deriving views from the match list.
@@ -88,6 +90,11 @@ func (s *Service) Results(ctx context.Context, limit int) ([]Match, error) {
 // GetMatch returns a single match by id.
 func (s *Service) GetMatch(ctx context.Context, id string) (Match, bool, error) {
 	return s.provider.GetMatch(ctx, strings.TrimSpace(id))
+}
+
+// Standings returns the group tables.
+func (s *Service) Standings(ctx context.Context) ([]Group, error) {
+	return s.provider.Standings(ctx)
 }
 
 func sortByKickoff(matches []Match, asc bool) {

@@ -26,6 +26,20 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/football/matches/upcoming", h.upcoming)
 	mux.HandleFunc("GET /api/v1/football/matches/results", h.results)
 	mux.HandleFunc("GET /api/v1/football/matches/{id}", h.getMatch)
+	mux.HandleFunc("GET /api/v1/football/standings", h.standings)
+}
+
+func (h *Handler) standings(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.svc.Standings(r.Context())
+	if err != nil {
+		h.logger.Error("football standings failed", "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "football provider request failed")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"count":  len(groups),
+		"groups": groups,
+	})
 }
 
 type listResponse struct {

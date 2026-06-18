@@ -36,6 +36,8 @@ type Client struct {
 	mu            sync.Mutex
 	cached        []football.Match
 	cachedAt      time.Time
+	standings     []football.Group
+	standingsAt   time.Time
 	cooldownUntil time.Time // don't call upstream before this (rate limit)
 }
 
@@ -138,6 +140,73 @@ func (c *Client) GetMatch(ctx context.Context, id string) (football.Match, bool,
 		return football.Match{}, false, nil
 	}
 	return dto.toMatch(), true, nil
+}
+
+type standingsResponse struct {
+	Standings []struct {
+		Type  string `json:"type"`
+		Group string `json:"group"`
+		Table []struct {
+			Position       int     `json:"position"`
+			Team           teamDTO `json:"team"`
+			PlayedGames    int     `json:"playedGames"`
+			Won            int     `json:"won"`
+			Draw           int     `json:"draw"`
+			Lost           int     `json:"lost"`
+			Points         int     `json:"points"`
+			GoalDifference int     `json:"goalDifference"`
+		} `json:"table"`
+	} `json:"standings"`
+}
+
+// Standings returns the group tables, cached like the match list.
+func (c *Client) Standings(ctx context.Context) ([]football.Group, error) {
+	c.mu.Lock()
+	fresh := c.standings != nil && time.Since(c.standingsAt) < c.cacheTTL
+	cached := c.standings
+	c.mu.Unlock()
+	if fresh {
+		return cached, nil
+	}
+
+	endpoint := fmt.Sprintf("%s/v4/competitions/%s/standings", c.baseURL, c.competition)
+	var payload standingsResponse
+	if err := c.get(ctx, endpoint, &payload); err != nil {
+		if cached != nil {
+			return cached, nil
+		}
+		return nil, err
+	}
+
+	groups := make([]football.Group, 0, len(payload.Standings))
+	for _, s := range payload.Standings {
+		if s.Type != "TOTAL" || s.Group == "" {
+			continue
+		}
+		table := make([]football.Standing, 0, len(s.Table))
+		for _, row := range s.Table {
+			table = append(table, football.Standing{
+				Position:       row.Position,
+				Team:           row.Team.Name,
+				Crest:          row.Team.Crest,
+				Played:         row.PlayedGames,
+				Won:            row.Won,
+				Draw:           row.Draw,
+				Lost:           row.Lost,
+				GoalDifference: row.GoalDifference,
+				Points:         row.Points,
+			})
+		}
+		groups = append(groups, football.Group{
+			Name:  strings.Replace(s.Group, "Group ", "Grupa ", 1),
+			Table: table,
+		})
+	}
+
+	c.mu.Lock()
+	c.standings, c.standingsAt = groups, time.Now()
+	c.mu.Unlock()
+	return groups, nil
 }
 
 func (c *Client) inCooldown() bool {
