@@ -198,7 +198,7 @@ func (c *Client) Standings(ctx context.Context) ([]football.Group, error) {
 			})
 		}
 		groups = append(groups, football.Group{
-			Name:  strings.Replace(s.Group, "Group ", "Grupa ", 1),
+			Name:  s.Group, // canonical English (e.g. "Group A"); localized on the client
 			Table: table,
 		})
 	}
@@ -305,24 +305,25 @@ func normalizeStatus(s string) string {
 	}
 }
 
-// stageLabel turns stage/group codes into a friendly Romanian label.
+// stageLabel turns stage/group codes into canonical English labels; the web
+// localizes them (see localizeStage).
 func stageLabel(stage, group string) string {
 	switch stage {
 	case "GROUP_STAGE":
 		if group != "" {
-			return "Grupa " + strings.TrimPrefix(group, "GROUP_")
+			return "Group " + strings.TrimPrefix(group, "GROUP_")
 		}
-		return "Faza grupelor"
+		return "Group stage"
 	case "LAST_16":
-		return "Optimi"
+		return "Round of 16"
 	case "QUARTER_FINALS":
-		return "Sferturi"
+		return "Quarter-finals"
 	case "SEMI_FINALS":
-		return "Semifinale"
+		return "Semi-finals"
 	case "THIRD_PLACE":
-		return "Finala mică"
+		return "Third place"
 	case "FINAL":
-		return "Finală"
+		return "Final"
 	default:
 		label := strings.ReplaceAll(strings.ToLower(stage), "_", " ")
 		if label == "" {

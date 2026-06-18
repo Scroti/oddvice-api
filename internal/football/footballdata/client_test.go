@@ -38,7 +38,7 @@ func TestMatches_MapsAndCaches(t *testing.T) {
 	}
 
 	m := matches[0]
-	if m.HomeTeam != "Mexico" || m.League != "Grupa A" {
+	if m.HomeTeam != "Mexico" || m.League != "Group A" {
 		t.Errorf("mapping wrong: %+v", m)
 	}
 	if !m.Played() || *m.HomeScore != 2 {
@@ -51,7 +51,7 @@ func TestMatches_MapsAndCaches(t *testing.T) {
 		t.Error("expected crest url")
 	}
 
-	if matches[1].League != "Finală" || matches[1].Played() {
+	if matches[1].League != "Final" || matches[1].Played() {
 		t.Errorf("final mapping wrong: %+v", matches[1])
 	}
 
