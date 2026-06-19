@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,7 +13,7 @@ import (
 )
 
 func newTestServer() http.Handler {
-	return New(config.Config{Env: "test", AllowedOrigins: []string{"*"}}, slog.Default())
+	return New(context.Background(), config.Config{Env: "test", AllowedOrigins: []string{"*"}}, slog.Default())
 }
 
 func TestHealthz(t *testing.T) {

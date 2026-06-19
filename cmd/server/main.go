@@ -35,9 +35,14 @@ func main() {
 	}
 	cfg := config.Load()
 
+	// Signal context — cancelled on SIGINT/SIGTERM; passed to server for
+	// background goroutines (push watcher, etc.).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           server.New(cfg, logger),
+		Handler:           server.New(ctx, cfg, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -52,9 +57,6 @@ func main() {
 			serverErr <- err
 		}
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	select {
 	case err := <-serverErr:

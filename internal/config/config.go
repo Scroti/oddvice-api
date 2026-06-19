@@ -17,6 +17,20 @@ type Config struct {
 	Football       Football    // football data provider settings
 	Teams          APIFootball // team-detail provider settings (api-football)
 	News           News        // news feed provider settings
+	Push           Push        // Web Push / VAPID settings
+}
+
+// Push holds the VAPID keys and subscription-store path for Web Push.
+type Push struct {
+	Public    string // VAPID public key  (VAPID_PUBLIC)
+	Private   string // VAPID private key (VAPID_PRIVATE)
+	Subject   string // VAPID subject, e.g. "mailto:admin@oddvice.app" (VAPID_SUBJECT)
+	StorePath string // path to push-subs JSON file (PUSH_STORE_PATH)
+}
+
+// Configured reports whether VAPID keys are both set and Web Push is usable.
+func (p Push) Configured() bool {
+	return p.Public != "" && p.Private != ""
 }
 
 // Football configures the football-data.org provider.
@@ -76,6 +90,12 @@ func Load() Config {
 			FeedURL: getenv("NEWS_FEED_URL", defaultNewsFeed),
 			Limit:   getint("NEWS_LIMIT", 30),
 			Timeout: getduration("NEWS_TIMEOUT_SECONDS", 10*time.Second),
+		},
+		Push: Push{
+			Public:    getenv("VAPID_PUBLIC", ""),
+			Private:   getenv("VAPID_PRIVATE", ""),
+			Subject:   getenv("VAPID_SUBJECT", "mailto:admin@oddvice.app"),
+			StorePath: getenv("PUSH_STORE_PATH", "/opt/oddvice-api/data/push-subs.json"),
 		},
 	}
 }
