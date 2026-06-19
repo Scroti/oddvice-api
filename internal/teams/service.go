@@ -30,6 +30,11 @@ func (s *Service) Lineups(ctx context.Context, home, away, date string) (MatchLi
 	return s.provider.Lineups(ctx, home, away, date)
 }
 
+// MatchStats returns per-team match statistics for a fixture (names + date).
+func (s *Service) MatchStats(ctx context.Context, home, away, date string) (MatchStats, bool, error) {
+	return s.provider.MatchStats(ctx, home, away, date)
+}
+
 // ByName resolves a team detail from a team name (used to enrich match views,
 // where names come from a different provider). Match is case-insensitive,
 // preferring an exact name match and falling back to a substring match.

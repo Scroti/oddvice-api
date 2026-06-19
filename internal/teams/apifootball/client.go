@@ -38,7 +38,15 @@ type Client struct {
 	teamListAt    time.Time
 	details       map[int]cachedDetail
 	lineups       map[string]cachedLineups
+	stats         map[string]cachedStats
+	fixtureIDs    map[string]int // "home|away|date" -> fixture id (stable)
 	cooldownUntil time.Time
+}
+
+type cachedStats struct {
+	ms    teams.MatchStats
+	found bool
+	at    time.Time
 }
 
 type cachedDetail struct {
@@ -69,7 +77,17 @@ func New(baseURL, apiKey string, league, season int, cacheTTL time.Duration, htt
 		cacheTTL:   cacheTTL,
 		details:    make(map[int]cachedDetail),
 		lineups:    make(map[string]cachedLineups),
+		stats:      make(map[string]cachedStats),
+		fixtureIDs: make(map[string]int),
 	}
+}
+
+// playerPhoto builds the headshot URL for an api-football player id.
+func playerPhoto(id int) string {
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://media.api-sports.io/football/players/%d.png", id)
 }
 
 // ---- DTOs ------------------------------------------------------------------
@@ -234,25 +252,46 @@ type fixturesResponse struct {
 	} `json:"response"`
 }
 
+type lineupPlayer struct {
+	Player struct {
+		ID     int    `json:"id"`
+		Name   string `json:"name"`
+		Number int    `json:"number"`
+		Pos    string `json:"pos"`
+		Grid   string `json:"grid"`
+	} `json:"player"`
+}
+
 type lineupsResponse struct {
 	Response []struct {
 		Team struct {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
 		} `json:"team"`
-		Formation string `json:"formation"`
-		StartXI   []struct {
-			Player struct {
-				Name   string `json:"name"`
-				Number int    `json:"number"`
-				Pos    string `json:"pos"`
-				Grid   string `json:"grid"`
-			} `json:"player"`
-		} `json:"startXI"`
-		Coach struct {
-			Name string `json:"name"`
+		Formation   string         `json:"formation"`
+		StartXI     []lineupPlayer `json:"startXI"`
+		Substitutes []lineupPlayer `json:"substitutes"`
+		Coach       struct {
+			Name  string `json:"name"`
+			Photo string `json:"photo"`
 		} `json:"coach"`
 	} `json:"response"`
+}
+
+func mapPlayers(in []lineupPlayer) []teams.Player {
+	out := make([]teams.Player, 0, len(in))
+	for _, e := range in {
+		p := e.Player
+		out = append(out, teams.Player{
+			ID:     p.ID,
+			Name:   p.Name,
+			Number: p.Number,
+			Pos:    p.Pos,
+			Grid:   p.Grid,
+			Photo:  playerPhoto(p.ID),
+		})
+	}
+	return out
 }
 
 // Lineups resolves the fixture by team names + date (YYYY-MM-DD) and returns
@@ -289,18 +328,13 @@ func (c *Client) Lineups(ctx context.Context, home, away, date string) (teams.Ma
 	var ml teams.MatchLineups
 	for _, r := range payload.Response {
 		lu := &teams.Lineup{
-			TeamID:    r.Team.ID,
-			TeamName:  r.Team.Name,
-			Formation: r.Formation,
-			Coach:     r.Coach.Name,
-		}
-		for _, x := range r.StartXI {
-			lu.StartXI = append(lu.StartXI, teams.Player{
-				Name:   x.Player.Name,
-				Number: x.Player.Number,
-				Pos:    x.Player.Pos,
-				Grid:   x.Player.Grid,
-			})
+			TeamID:      r.Team.ID,
+			TeamName:    r.Team.Name,
+			Formation:   r.Formation,
+			Coach:       r.Coach.Name,
+			CoachPhoto:  r.Coach.Photo,
+			StartXI:     mapPlayers(r.StartXI),
+			Substitutes: mapPlayers(r.Substitutes),
 		}
 		switch {
 		case nameMatches(r.Team.Name, home):
@@ -326,6 +360,14 @@ func (c *Client) cacheLineups(key string, ml teams.MatchLineups, found bool) {
 }
 
 func (c *Client) resolveFixture(ctx context.Context, home, away, date string) (int, bool, error) {
+	key := strings.ToLower(home + "|" + away + "|" + date)
+	c.mu.Lock()
+	if id, ok := c.fixtureIDs[key]; ok {
+		c.mu.Unlock()
+		return id, true, nil
+	}
+	c.mu.Unlock()
+
 	endpoint := fmt.Sprintf("%s/fixtures?league=%d&season=%d&date=%s",
 		c.baseURL, c.league, c.season, url.QueryEscape(date))
 	var payload fixturesResponse
@@ -336,10 +378,103 @@ func (c *Client) resolveFixture(ctx context.Context, home, away, date string) (i
 		h, a := r.Teams.Home.Name, r.Teams.Away.Name
 		if (nameMatches(h, home) && nameMatches(a, away)) ||
 			(nameMatches(h, away) && nameMatches(a, home)) {
+			c.mu.Lock()
+			c.fixtureIDs[key] = r.Fixture.ID
+			c.mu.Unlock()
 			return r.Fixture.ID, true, nil
 		}
 	}
 	return 0, false, nil
+}
+
+type statisticsResponse struct {
+	Response []struct {
+		Team struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"team"`
+		Statistics []struct {
+			Type  string          `json:"type"`
+			Value json.RawMessage `json:"value"`
+		} `json:"statistics"`
+	} `json:"response"`
+}
+
+// rawToString renders a JSON value (number, "42%", or null) as a plain string.
+func rawToString(r json.RawMessage) string {
+	s := strings.TrimSpace(string(r))
+	if s == "" || s == "null" {
+		return ""
+	}
+	if len(s) >= 2 && s[0] == '"' {
+		var v string
+		if err := json.Unmarshal(r, &v); err == nil {
+			return v
+		}
+	}
+	return s
+}
+
+// MatchStats returns per-team match statistics, paired home vs away.
+func (c *Client) MatchStats(ctx context.Context, home, away, date string) (teams.MatchStats, bool, error) {
+	home, away, date = strings.TrimSpace(home), strings.TrimSpace(away), strings.TrimSpace(date)
+	if home == "" || away == "" || date == "" {
+		return teams.MatchStats{}, false, nil
+	}
+	key := strings.ToLower(home + "|" + away + "|" + date)
+
+	c.mu.Lock()
+	if cs, ok := c.stats[key]; ok && time.Since(cs.at) < c.cacheTTL {
+		c.mu.Unlock()
+		return cs.ms, cs.found, nil
+	}
+	c.mu.Unlock()
+
+	fid, ok, err := c.resolveFixture(ctx, home, away, date)
+	if err != nil {
+		return teams.MatchStats{}, false, err
+	}
+	if !ok {
+		c.cacheStats(key, teams.MatchStats{}, false)
+		return teams.MatchStats{}, false, nil
+	}
+
+	var payload statisticsResponse
+	if err := c.get(ctx, fmt.Sprintf("%s/fixtures/statistics?fixture=%d", c.baseURL, fid), &payload); err != nil {
+		return teams.MatchStats{}, false, err
+	}
+	if len(payload.Response) < 2 {
+		c.cacheStats(key, teams.MatchStats{}, false)
+		return teams.MatchStats{}, false, nil
+	}
+
+	// Figure out which entry is home vs away.
+	hi, ai := 0, 1
+	if nameMatches(payload.Response[1].Team.Name, home) || nameMatches(payload.Response[0].Team.Name, away) {
+		hi, ai = 1, 0
+	}
+	awayByType := make(map[string]string)
+	for _, s := range payload.Response[ai].Statistics {
+		awayByType[s.Type] = rawToString(s.Value)
+	}
+	ms := teams.MatchStats{}
+	for _, s := range payload.Response[hi].Statistics {
+		ms.Lines = append(ms.Lines, teams.StatLine{
+			Type: s.Type,
+			Home: rawToString(s.Value),
+			Away: awayByType[s.Type],
+		})
+	}
+
+	found := len(ms.Lines) > 0
+	c.cacheStats(key, ms, found)
+	return ms, found, nil
+}
+
+func (c *Client) cacheStats(key string, ms teams.MatchStats, found bool) {
+	c.mu.Lock()
+	c.stats[key] = cachedStats{ms: ms, found: found, at: time.Now()}
+	c.mu.Unlock()
 }
 
 func nameMatches(a, b string) bool {

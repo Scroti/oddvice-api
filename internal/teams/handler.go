@@ -26,6 +26,18 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/teams/by-name", h.byName)
 	mux.HandleFunc("GET /api/v1/teams/{id}", h.get)
 	mux.HandleFunc("GET /api/v1/lineups", h.lineups)
+	mux.HandleFunc("GET /api/v1/match-stats", h.matchStats)
+}
+
+func (h *Handler) matchStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ms, _, err := h.svc.MatchStats(r.Context(), q.Get("home"), q.Get("away"), q.Get("date"))
+	if err != nil {
+		h.logger.Error("match-stats failed", "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "could not load match stats")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ms) // empty lines when unavailable
 }
 
 func (h *Handler) lineups(w http.ResponseWriter, r *http.Request) {

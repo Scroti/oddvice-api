@@ -38,27 +38,44 @@ type Detail struct {
 	Stats *Stats `json:"stats,omitempty"`
 }
 
-// Player is a starting-XI player from a match lineup.
+// Player is a player from a match lineup (starter or substitute).
 type Player struct {
+	ID     int    `json:"id,omitempty"`
 	Name   string `json:"name"`
 	Number int    `json:"number,omitempty"`
-	Pos    string `json:"pos,omitempty"`  // "G" | "D" | "M" | "F"
-	Grid   string `json:"grid,omitempty"` // "row:col", row 1 = goalkeeper line
+	Pos    string `json:"pos,omitempty"`   // "G" | "D" | "M" | "F"
+	Grid   string `json:"grid,omitempty"`  // "row:col", row 1 = goalkeeper line
+	Photo  string `json:"photo,omitempty"` // headshot URL
 }
 
-// Lineup is one team's confirmed starting XI for a fixture.
+// Lineup is one team's confirmed XI for a fixture.
 type Lineup struct {
-	TeamID    int      `json:"teamId"`
-	TeamName  string   `json:"teamName"`
-	Formation string   `json:"formation"`
-	Coach     string   `json:"coach,omitempty"`
-	StartXI   []Player `json:"startXI"`
+	TeamID      int      `json:"teamId"`
+	TeamName    string   `json:"teamName"`
+	Formation   string   `json:"formation"`
+	Coach       string   `json:"coach,omitempty"`
+	CoachPhoto  string   `json:"coachPhoto,omitempty"`
+	StartXI     []Player `json:"startXI"`
+	Substitutes []Player `json:"substitutes,omitempty"`
 }
 
 // MatchLineups holds both teams' lineups for a fixture (nil when unavailable).
 type MatchLineups struct {
 	Home *Lineup `json:"home"`
 	Away *Lineup `json:"away"`
+}
+
+// StatLine is one match statistic compared across both teams (values are raw
+// strings as the provider gives them, e.g. "42%", "8", "0.48").
+type StatLine struct {
+	Type string `json:"type"`
+	Home string `json:"home"`
+	Away string `json:"away"`
+}
+
+// MatchStats is the per-match team statistics (possession, shots, passes…).
+type MatchStats struct {
+	Lines []StatLine `json:"lines"`
 }
 
 // Provider fetches team data from an external source (api-football.com).
@@ -71,4 +88,7 @@ type Provider interface {
 	// both starting XIs. found=false when the fixture or lineups aren't available
 	// (e.g. pre-match, or the plan/season lacks the data).
 	Lineups(ctx context.Context, home, away, date string) (MatchLineups, bool, error)
+	// MatchStats returns per-team match statistics for the fixture (found=false
+	// when unavailable, e.g. before kickoff).
+	MatchStats(ctx context.Context, home, away, date string) (MatchStats, bool, error)
 }
