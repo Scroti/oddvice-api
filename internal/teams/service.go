@@ -35,6 +35,16 @@ func (s *Service) MatchStats(ctx context.Context, home, away, date string) (Matc
 	return s.provider.MatchStats(ctx, home, away, date)
 }
 
+// Live returns all in-play fixtures of the competition.
+func (s *Service) Live(ctx context.Context) ([]LiveMatch, error) {
+	return s.provider.LiveMatches(ctx)
+}
+
+// Events returns the match timeline for a fixture (names + date).
+func (s *Service) Events(ctx context.Context, home, away, date string) ([]Event, bool, error) {
+	return s.provider.Events(ctx, home, away, date)
+}
+
 // ByName resolves a team detail from a team name (used to enrich match views,
 // where names come from a different provider). Match is case-insensitive,
 // preferring an exact name match and falling back to a substring match.

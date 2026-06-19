@@ -39,8 +39,20 @@ type Client struct {
 	details       map[int]cachedDetail
 	lineups       map[string]cachedLineups
 	stats         map[string]cachedStats
+	live          []teams.LiveMatch
+	liveAt        time.Time
+	events        map[string]cachedEvents
 	fixtureIDs    map[string]int // "home|away|date" -> fixture id (stable)
 	cooldownUntil time.Time
+}
+
+// liveTTL keeps live data fresh without hammering the API (it updates ~every 15s).
+const liveTTL = 20 * time.Second
+
+type cachedEvents struct {
+	events []teams.Event
+	found  bool
+	at     time.Time
 }
 
 type cachedStats struct {
@@ -78,6 +90,7 @@ func New(baseURL, apiKey string, league, season int, cacheTTL time.Duration, htt
 		details:    make(map[int]cachedDetail),
 		lineups:    make(map[string]cachedLineups),
 		stats:      make(map[string]cachedStats),
+		events:     make(map[string]cachedEvents),
 		fixtureIDs: make(map[string]int),
 	}
 }
@@ -475,6 +488,137 @@ func (c *Client) cacheStats(key string, ms teams.MatchStats, found bool) {
 	c.mu.Lock()
 	c.stats[key] = cachedStats{ms: ms, found: found, at: time.Now()}
 	c.mu.Unlock()
+}
+
+type liveFixturesResponse struct {
+	Response []struct {
+		Fixture struct {
+			ID     int `json:"id"`
+			Status struct {
+				Short   string `json:"short"`
+				Elapsed int    `json:"elapsed"`
+			} `json:"status"`
+		} `json:"fixture"`
+		Teams struct {
+			Home struct {
+				Name string `json:"name"`
+				Logo string `json:"logo"`
+			} `json:"home"`
+			Away struct {
+				Name string `json:"name"`
+				Logo string `json:"logo"`
+			} `json:"away"`
+		} `json:"teams"`
+		Goals struct {
+			Home *int `json:"home"`
+			Away *int `json:"away"`
+		} `json:"goals"`
+	} `json:"response"`
+}
+
+// LiveMatches returns all currently in-play fixtures (cached ~20s).
+func (c *Client) LiveMatches(ctx context.Context) ([]teams.LiveMatch, error) {
+	c.mu.Lock()
+	if c.live != nil && time.Since(c.liveAt) < liveTTL {
+		out := c.live
+		c.mu.Unlock()
+		return out, nil
+	}
+	cached := c.live
+	c.mu.Unlock()
+
+	endpoint := fmt.Sprintf("%s/fixtures?live=all&league=%d&season=%d", c.baseURL, c.league, c.season)
+	var payload liveFixturesResponse
+	if err := c.get(ctx, endpoint, &payload); err != nil {
+		if cached != nil {
+			return cached, nil
+		}
+		return nil, err
+	}
+
+	out := make([]teams.LiveMatch, 0, len(payload.Response))
+	for _, r := range payload.Response {
+		out = append(out, teams.LiveMatch{
+			FixtureID: r.Fixture.ID,
+			Home:      r.Teams.Home.Name,
+			Away:      r.Teams.Away.Name,
+			HomeLogo:  r.Teams.Home.Logo,
+			AwayLogo:  r.Teams.Away.Logo,
+			HomeGoals: deref(r.Goals.Home),
+			AwayGoals: deref(r.Goals.Away),
+			Elapsed:   r.Fixture.Status.Elapsed,
+			Status:    r.Fixture.Status.Short,
+		})
+	}
+
+	c.mu.Lock()
+	c.live, c.liveAt = out, time.Now()
+	c.mu.Unlock()
+	return out, nil
+}
+
+type eventsResponse struct {
+	Response []struct {
+		Time struct {
+			Elapsed int  `json:"elapsed"`
+			Extra   *int `json:"extra"`
+		} `json:"time"`
+		Team   struct{ Name string `json:"name"` } `json:"team"`
+		Player struct{ Name string `json:"name"` } `json:"player"`
+		Assist struct{ Name string `json:"name"` } `json:"assist"`
+		Type   string `json:"type"`
+		Detail string `json:"detail"`
+	} `json:"response"`
+}
+
+// Events returns the match timeline for the fixture (cached ~20s for live).
+func (c *Client) Events(ctx context.Context, home, away, date string) ([]teams.Event, bool, error) {
+	home, away, date = strings.TrimSpace(home), strings.TrimSpace(away), strings.TrimSpace(date)
+	if home == "" || away == "" || date == "" {
+		return nil, false, nil
+	}
+	key := strings.ToLower(home + "|" + away + "|" + date)
+
+	c.mu.Lock()
+	if ce, ok := c.events[key]; ok && time.Since(ce.at) < liveTTL {
+		c.mu.Unlock()
+		return ce.events, ce.found, nil
+	}
+	c.mu.Unlock()
+
+	fid, ok, err := c.resolveFixture(ctx, home, away, date)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		c.mu.Lock()
+		c.events[key] = cachedEvents{found: false, at: time.Now()}
+		c.mu.Unlock()
+		return nil, false, nil
+	}
+
+	var payload eventsResponse
+	if err := c.get(ctx, fmt.Sprintf("%s/fixtures/events?fixture=%d", c.baseURL, fid), &payload); err != nil {
+		return nil, false, err
+	}
+	out := make([]teams.Event, 0, len(payload.Response))
+	for _, e := range payload.Response {
+		out = append(out, teams.Event{
+			Minute: e.Time.Elapsed,
+			Extra:  deref(e.Time.Extra),
+			Team:   e.Team.Name,
+			Type:   e.Type,
+			Detail: e.Detail,
+			Player: e.Player.Name,
+			Assist: e.Assist.Name,
+		})
+	}
+
+	found := len(out) > 0
+	c.mu.Lock()
+	c.events[key] = cachedEvents{events: out, found: found, at: time.Now()}
+	c.mu.Unlock()
+	return out, found, nil
 }
 
 func nameMatches(a, b string) bool {

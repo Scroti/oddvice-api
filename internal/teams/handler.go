@@ -27,6 +27,35 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/teams/{id}", h.get)
 	mux.HandleFunc("GET /api/v1/lineups", h.lineups)
 	mux.HandleFunc("GET /api/v1/match-stats", h.matchStats)
+	mux.HandleFunc("GET /api/v1/live", h.live)
+	mux.HandleFunc("GET /api/v1/events", h.events)
+}
+
+func (h *Handler) live(w http.ResponseWriter, r *http.Request) {
+	matches, err := h.svc.Live(r.Context())
+	if err != nil {
+		h.logger.Error("live failed", "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "could not load live matches")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"count":   len(matches),
+		"matches": matches,
+	})
+}
+
+func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	events, _, err := h.svc.Events(r.Context(), q.Get("home"), q.Get("away"), q.Get("date"))
+	if err != nil {
+		h.logger.Error("events failed", "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "could not load match events")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"count":  len(events),
+		"events": events,
+	})
 }
 
 func (h *Handler) matchStats(w http.ResponseWriter, r *http.Request) {

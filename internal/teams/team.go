@@ -78,6 +78,30 @@ type MatchStats struct {
 	Lines []StatLine `json:"lines"`
 }
 
+// LiveMatch is a currently in-play fixture for the live scoreboard.
+type LiveMatch struct {
+	FixtureID int    `json:"fixtureId"`
+	Home      string `json:"home"`
+	Away      string `json:"away"`
+	HomeLogo  string `json:"homeLogo,omitempty"`
+	AwayLogo  string `json:"awayLogo,omitempty"`
+	HomeGoals int    `json:"homeGoals"`
+	AwayGoals int    `json:"awayGoals"`
+	Elapsed   int    `json:"elapsed"` // minutes played
+	Status    string `json:"status"`  // short code: 1H, HT, 2H, ET, P, …
+}
+
+// Event is one match timeline entry (goal, card, substitution, VAR).
+type Event struct {
+	Minute int    `json:"minute"`
+	Extra  int    `json:"extra,omitempty"`
+	Team   string `json:"team"`
+	Type   string `json:"type"`   // "Goal" | "Card" | "subst" | "Var"
+	Detail string `json:"detail"` // "Normal Goal", "Yellow Card", "Substitution 1", …
+	Player string `json:"player,omitempty"`
+	Assist string `json:"assist,omitempty"` // assister, or (for subs) the player off
+}
+
 // Provider fetches team data from an external source (api-football.com).
 type Provider interface {
 	// Teams lists every team in the configured competition/season.
@@ -91,4 +115,8 @@ type Provider interface {
 	// MatchStats returns per-team match statistics for the fixture (found=false
 	// when unavailable, e.g. before kickoff).
 	MatchStats(ctx context.Context, home, away, date string) (MatchStats, bool, error)
+	// LiveMatches returns all currently in-play fixtures of the competition.
+	LiveMatches(ctx context.Context) ([]LiveMatch, error)
+	// Events returns the match timeline (goals, cards, subs) for the fixture.
+	Events(ctx context.Context, home, away, date string) ([]Event, bool, error)
 }
