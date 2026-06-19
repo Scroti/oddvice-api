@@ -18,6 +18,13 @@ type Config struct {
 	Teams          APIFootball // team-detail provider settings (api-football)
 	News           News        // news feed provider settings
 	Push           Push        // Web Push / VAPID settings
+	Database       Database    // Postgres connection (commentary cache)
+}
+
+// Database holds the Postgres connection settings. When URL is empty the API
+// runs without persistence (commentary falls back to an in-memory cache).
+type Database struct {
+	URL string // postgres connection string (DATABASE_URL)
 }
 
 // Push holds the VAPID keys and subscription-store path for Web Push.
@@ -96,6 +103,9 @@ func Load() Config {
 			Private:   getenv("VAPID_PRIVATE", ""),
 			Subject:   getenv("VAPID_SUBJECT", "mailto:admin@oddvice.app"),
 			StorePath: getenv("PUSH_STORE_PATH", "/opt/oddvice-api/data/push-subs.json"),
+		},
+		Database: Database{
+			URL: getenv("DATABASE_URL", ""),
 		},
 	}
 }

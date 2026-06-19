@@ -8,7 +8,7 @@ import (
 // Commentator turns match events into human commentary lines (implemented by
 // the commentary package). Optional — nil disables AI commentary.
 type Commentator interface {
-	Enrich(ctx context.Context, lang, matchLabel string, events []Event) []Event
+	Enrich(ctx context.Context, fixtureID int, lang, matchLabel string, events []Event) []Event
 }
 
 // Service holds team business logic over a Provider.
@@ -59,7 +59,7 @@ func (s *Service) EventsByFixture(ctx context.Context, fixtureID int, lang strin
 	if err != nil || !found || s.commentator == nil {
 		return events, found, err
 	}
-	return s.commentator.Enrich(ctx, lang, matchLabel(events), events), found, nil
+	return s.commentator.Enrich(ctx, fixtureID, lang, matchLabel(events), events), found, nil
 }
 
 // matchLabel derives "TeamA vs TeamB" from the events' distinct team names.

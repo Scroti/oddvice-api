@@ -78,7 +78,18 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 		cfg.Teams.CacheTTL,
 		teamsClient,
 	)
-	teamsSvc := teams.NewService(teamsProvider, commentary.New())
+	// Commentary persistence (Postgres). Optional — falls back to in-memory.
+	commentaryStore, err := commentary.NewStore(ctx, cfg.Database.URL)
+	if err != nil {
+		logger.Error("commentary store init failed; using in-memory only", "error", err)
+		commentaryStore = nil
+	}
+	if commentaryStore != nil {
+		logger.Info("commentary persistence: postgres")
+	} else {
+		logger.Info("commentary persistence: in-memory only")
+	}
+	teamsSvc := teams.NewService(teamsProvider, commentary.New(commentaryStore))
 	teams.NewHandler(teamsSvc, logger).Register(mux)
 
 	// Tips (mock now, Claude/DB-backed later) — built over the football service.

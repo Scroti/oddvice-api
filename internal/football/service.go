@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Provider fetches football data from an external source (e.g. football-data.org).
@@ -56,30 +57,36 @@ func (s *Service) Search(ctx context.Context, query string) ([]Match, error) {
 	return out, nil
 }
 
-// Upcoming returns not-yet-finished matches, soonest first.
+// Upcoming returns matches that have not kicked off yet, soonest first.
+// Time-based (kickoff in the future) rather than score-based, so past matches
+// that the data source never scored don't leak in as "next".
 func (s *Service) Upcoming(ctx context.Context, limit int) ([]Match, error) {
 	all, err := s.All(ctx)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	out := make([]Match, 0)
 	for _, m := range all {
-		if !m.Played() {
+		if m.KickoffAt != nil && m.KickoffAt.After(now) {
 			out = append(out, m)
 		}
 	}
 	return capped(out, limit), nil
 }
 
-// Results returns finished matches, most recent first.
+// Results returns matches that have already kicked off (or have a final score),
+// most recent first. Past matches without a recorded score still count here.
 func (s *Service) Results(ctx context.Context, limit int) ([]Match, error) {
 	all, err := s.All(ctx)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	out := make([]Match, 0)
 	for _, m := range all {
-		if m.Played() {
+		started := m.KickoffAt != nil && !m.KickoffAt.After(now)
+		if started || (m.KickoffAt == nil && m.Played()) {
 			out = append(out, m)
 		}
 	}
