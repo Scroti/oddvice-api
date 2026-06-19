@@ -51,7 +51,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		err    error
 	)
 	if fid, e := strconv.Atoi(q.Get("fixture")); e == nil && fid > 0 {
-		events, _, err = h.svc.EventsByFixture(r.Context(), fid)
+		events, _, err = h.svc.EventsByFixture(r.Context(), fid, q.Get("lang"))
 	} else {
 		events, _, err = h.svc.Events(r.Context(), q.Get("home"), q.Get("away"), q.Get("date"))
 	}

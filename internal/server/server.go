@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/oddvice/api/internal/commentary"
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/footballdata"
@@ -73,7 +74,7 @@ func registerFeatures(mux *http.ServeMux, cfg config.Config, logger *slog.Logger
 		cfg.Teams.CacheTTL,
 		teamsClient,
 	)
-	teams.NewHandler(teams.NewService(teamsProvider), logger).Register(mux)
+	teams.NewHandler(teams.NewService(teamsProvider, commentary.New()), logger).Register(mux)
 
 	// Tips (mock now, Claude/DB-backed later) — built over the football service.
 	tipsService := tips.NewService(tips.NewMockProvider(), footballService)

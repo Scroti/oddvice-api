@@ -5,14 +5,21 @@ import (
 	"strings"
 )
 
-// Service holds team business logic over a Provider.
-type Service struct {
-	provider Provider
+// Commentator turns match events into human commentary lines (implemented by
+// the commentary package). Optional — nil disables AI commentary.
+type Commentator interface {
+	Enrich(ctx context.Context, lang, matchLabel string, events []Event) []Event
 }
 
-// NewService builds a Service backed by the given Provider.
-func NewService(provider Provider) *Service {
-	return &Service{provider: provider}
+// Service holds team business logic over a Provider.
+type Service struct {
+	provider    Provider
+	commentator Commentator
+}
+
+// NewService builds a Service backed by the given Provider (commentator optional).
+func NewService(provider Provider, commentator Commentator) *Service {
+	return &Service{provider: provider, commentator: commentator}
 }
 
 // All returns every team in the competition.
@@ -45,9 +52,38 @@ func (s *Service) Events(ctx context.Context, home, away, date string) ([]Event,
 	return s.provider.Events(ctx, home, away, date)
 }
 
-// EventsByFixture returns the timeline for a known api-football fixture id.
-func (s *Service) EventsByFixture(ctx context.Context, fixtureID int) ([]Event, bool, error) {
-	return s.provider.EventsByFixture(ctx, fixtureID)
+// EventsByFixture returns the timeline for a known api-football fixture id,
+// enriched with AI commentary lines (in lang) when a commentator is configured.
+func (s *Service) EventsByFixture(ctx context.Context, fixtureID int, lang string) ([]Event, bool, error) {
+	events, found, err := s.provider.EventsByFixture(ctx, fixtureID)
+	if err != nil || !found || s.commentator == nil {
+		return events, found, err
+	}
+	return s.commentator.Enrich(ctx, lang, matchLabel(events), events), found, nil
+}
+
+// matchLabel derives "TeamA vs TeamB" from the events' distinct team names.
+func matchLabel(events []Event) string {
+	var names []string
+	for _, e := range events {
+		if e.Team == "" {
+			continue
+		}
+		seen := false
+		for _, n := range names {
+			if n == e.Team {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			names = append(names, e.Team)
+		}
+		if len(names) == 2 {
+			break
+		}
+	}
+	return strings.Join(names, " vs ")
 }
 
 // ByName resolves a team detail from a team name (used to enrich match views,

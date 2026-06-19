@@ -98,8 +98,9 @@ type Event struct {
 	Team   string `json:"team"`
 	Type   string `json:"type"`   // "Goal" | "Card" | "subst" | "Var"
 	Detail string `json:"detail"` // "Normal Goal", "Yellow Card", "Substitution 1", …
-	Player string `json:"player,omitempty"`
-	Assist string `json:"assist,omitempty"` // assister, or (for subs) the player off
+	Player     string `json:"player,omitempty"`
+	Assist     string `json:"assist,omitempty"` // assister, or (for subs) the player off
+	Commentary string `json:"commentary,omitempty"` // AI one-liner (Claude), when available
 }
 
 // Provider fetches team data from an external source (api-football.com).
