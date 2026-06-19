@@ -119,4 +119,6 @@ type Provider interface {
 	LiveMatches(ctx context.Context) ([]LiveMatch, error)
 	// Events returns the match timeline (goals, cards, subs) for the fixture.
 	Events(ctx context.Context, home, away, date string) ([]Event, bool, error)
+	// EventsByFixture returns the timeline for a known api-football fixture id.
+	EventsByFixture(ctx context.Context, fixtureID int) ([]Event, bool, error)
 }

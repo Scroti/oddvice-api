@@ -46,7 +46,15 @@ func (h *Handler) live(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	events, _, err := h.svc.Events(r.Context(), q.Get("home"), q.Get("away"), q.Get("date"))
+	var (
+		events []Event
+		err    error
+	)
+	if fid, e := strconv.Atoi(q.Get("fixture")); e == nil && fid > 0 {
+		events, _, err = h.svc.EventsByFixture(r.Context(), fid)
+	} else {
+		events, _, err = h.svc.Events(r.Context(), q.Get("home"), q.Get("away"), q.Get("date"))
+	}
 	if err != nil {
 		h.logger.Error("events failed", "error", err)
 		httpx.WriteError(w, http.StatusBadGateway, "could not load match events")

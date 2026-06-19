@@ -45,6 +45,11 @@ func (s *Service) Events(ctx context.Context, home, away, date string) ([]Event,
 	return s.provider.Events(ctx, home, away, date)
 }
 
+// EventsByFixture returns the timeline for a known api-football fixture id.
+func (s *Service) EventsByFixture(ctx context.Context, fixtureID int) ([]Event, bool, error) {
+	return s.provider.EventsByFixture(ctx, fixtureID)
+}
+
 // ByName resolves a team detail from a team name (used to enrich match views,
 // where names come from a different provider). Match is case-insensitive,
 // preferring an exact name match and falling back to a substring match.

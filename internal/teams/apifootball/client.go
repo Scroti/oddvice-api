@@ -597,6 +597,17 @@ func (c *Client) Events(ctx context.Context, home, away, date string) ([]teams.E
 		return nil, false, nil
 	}
 
+	out, found, err := c.fetchEvents(ctx, fid)
+	if err != nil {
+		return nil, false, err
+	}
+	c.mu.Lock()
+	c.events[key] = cachedEvents{events: out, found: found, at: time.Now()}
+	c.mu.Unlock()
+	return out, found, nil
+}
+
+func (c *Client) fetchEvents(ctx context.Context, fid int) ([]teams.Event, bool, error) {
 	var payload eventsResponse
 	if err := c.get(ctx, fmt.Sprintf("%s/fixtures/events?fixture=%d", c.baseURL, fid), &payload); err != nil {
 		return nil, false, err
@@ -613,8 +624,26 @@ func (c *Client) Events(ctx context.Context, home, away, date string) ([]teams.E
 			Assist: e.Assist.Name,
 		})
 	}
+	return out, len(out) > 0, nil
+}
 
-	found := len(out) > 0
+// EventsByFixture returns the timeline for a known fixture id (cached ~20s).
+func (c *Client) EventsByFixture(ctx context.Context, fid int) ([]teams.Event, bool, error) {
+	if fid <= 0 {
+		return nil, false, nil
+	}
+	key := "fid:" + strconv.Itoa(fid)
+	c.mu.Lock()
+	if ce, ok := c.events[key]; ok && time.Since(ce.at) < liveTTL {
+		c.mu.Unlock()
+		return ce.events, ce.found, nil
+	}
+	c.mu.Unlock()
+
+	out, found, err := c.fetchEvents(ctx, fid)
+	if err != nil {
+		return nil, false, err
+	}
 	c.mu.Lock()
 	c.events[key] = cachedEvents{events: out, found: found, at: time.Now()}
 	c.mu.Unlock()
