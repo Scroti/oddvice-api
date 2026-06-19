@@ -30,7 +30,7 @@ type listResponse struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	articles, err := h.svc.Latest(r.Context())
+	articles, err := h.svc.Latest(r.Context(), r.URL.Query().Get("lang"))
 	if err != nil {
 		h.logger.Error("news list failed", "error", err)
 		httpx.WriteError(w, http.StatusBadGateway, "news provider request failed")
@@ -44,7 +44,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	article, found, err := h.svc.GetByID(r.Context(), id)
+	article, found, err := h.svc.GetByID(r.Context(), id, r.URL.Query().Get("lang"))
 	if err != nil {
 		h.logger.Error("news lookup failed", "id", id, "error", err)
 		httpx.WriteError(w, http.StatusBadGateway, "news provider request failed")

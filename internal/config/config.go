@@ -13,9 +13,10 @@ type Config struct {
 	Env            string   // "development" | "production"
 	Host           string   // bind host, e.g. "0.0.0.0"
 	Port           string   // bind port, e.g. "8080"
-	AllowedOrigins []string // CORS allow-list; ["*"] allows any origin
-	Football       Football // football data provider settings
-	News           News     // news feed provider settings
+	AllowedOrigins []string    // CORS allow-list; ["*"] allows any origin
+	Football       Football    // football data provider settings
+	Teams          APIFootball // team-detail provider settings (api-football)
+	News           News        // news feed provider settings
 }
 
 // Football configures the football-data.org provider.
@@ -25,6 +26,18 @@ type Football struct {
 	Competition string        // competition code, e.g. "WC" (FIFA World Cup)
 	Timeout     time.Duration // per-request timeout
 	CacheTTL    time.Duration // how long to cache the match list (rate limits)
+}
+
+// APIFootball configures the api-football.com provider, used for rich team
+// details (form, cards, goals, clean sheets) that football-data.org lacks.
+// The free tier is ~100 requests/day, so the client caches aggressively.
+type APIFootball struct {
+	APIKey   string        // x-apisports-key
+	BaseURL  string        // API base URL
+	League   int           // competition id (World Cup = 1)
+	Season   int           // season year, e.g. 2026
+	Timeout  time.Duration // per-request timeout
+	CacheTTL time.Duration // how long to cache team data (rate limits)
 }
 
 // News configures the external news feed provider.
@@ -50,6 +63,14 @@ func Load() Config {
 			Competition: getenv("FOOTBALL_COMPETITION", "WC"),
 			Timeout:     getduration("FOOTBALL_TIMEOUT_SECONDS", 12*time.Second),
 			CacheTTL:    getduration("FOOTBALL_CACHE_SECONDS", 120*time.Second),
+		},
+		Teams: APIFootball{
+			APIKey:   getenv("APIFOOTBALL_API_KEY", ""),
+			BaseURL:  getenv("APIFOOTBALL_BASE_URL", "https://v3.football.api-sports.io"),
+			League:   getint("APIFOOTBALL_LEAGUE", 1),    // FIFA World Cup
+			Season:   getint("APIFOOTBALL_SEASON", 2026),
+			Timeout:  getduration("APIFOOTBALL_TIMEOUT_SECONDS", 12*time.Second),
+			CacheTTL: getduration("APIFOOTBALL_CACHE_SECONDS", 6*time.Hour),
 		},
 		News: News{
 			FeedURL: getenv("NEWS_FEED_URL", defaultNewsFeed),

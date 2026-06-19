@@ -10,6 +10,9 @@ import (
 	"github.com/oddvice/api/internal/football/footballdata"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
+	"github.com/oddvice/api/internal/teams"
+	"github.com/oddvice/api/internal/teams/apifootball"
+	"github.com/oddvice/api/internal/tips"
 )
 
 // Version is the API version, overridable at build time via -ldflags.
@@ -48,7 +51,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 // registerFeatures builds and mounts the feature modules.
 func registerFeatures(mux *http.ServeMux, cfg config.Config, logger *slog.Logger) {
-	// Football (football-data.org)
+	// Football (football-data.org) — shared with the tips feature.
 	footballClient := &http.Client{Timeout: cfg.Football.Timeout}
 	footballProvider := footballdata.New(
 		cfg.Football.BaseURL,
@@ -57,10 +60,27 @@ func registerFeatures(mux *http.ServeMux, cfg config.Config, logger *slog.Logger
 		cfg.Football.CacheTTL,
 		footballClient,
 	)
-	football.NewHandler(football.NewService(footballProvider), logger).Register(mux)
+	footballService := football.NewService(footballProvider)
+	football.NewHandler(footballService, logger).Register(mux)
+
+	// Teams (api-football.com) — rich details: form, cards, goals.
+	teamsClient := &http.Client{Timeout: cfg.Teams.Timeout}
+	teamsProvider := apifootball.New(
+		cfg.Teams.BaseURL,
+		cfg.Teams.APIKey,
+		cfg.Teams.League,
+		cfg.Teams.Season,
+		cfg.Teams.CacheTTL,
+		teamsClient,
+	)
+	teams.NewHandler(teams.NewService(teamsProvider), logger).Register(mux)
+
+	// Tips (mock now, Claude/DB-backed later) — built over the football service.
+	tipsService := tips.NewService(tips.NewMockProvider(), footballService)
+	tips.NewHandler(tipsService, logger).Register(mux)
 
 	// News
 	newsClient := &http.Client{Timeout: cfg.News.Timeout}
-	newsProvider := googlenews.New(cfg.News.FeedURL, cfg.News.Limit, newsClient)
+	newsProvider := googlenews.New(cfg.News.Limit, newsClient)
 	news.NewHandler(news.NewService(newsProvider), logger).Register(mux)
 }

@@ -1,5 +1,6 @@
 // Package googlenews implements news.Provider against Google News RSS, which is
-// free and needs no API key.
+// free and needs no API key. Feeds are localized per app language (query +
+// hl/gl/ceid), so English users get English news, French users French, etc.
 package googlenews
 
 import (
@@ -10,27 +11,76 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oddvice/api/internal/news"
 )
 
-// Client fetches and parses a Google News RSS feed.
+// feedParams configures one language's Google News search feed.
+type feedParams struct {
+	query string
+	hl    string // interface language, e.g. "fr"
+	gl    string // country, e.g. "FR"
+	ceid  string // "<country>:<lang>", e.g. "FR:fr"
+}
+
+// feeds maps an app locale to a localized World Cup 2026 news feed.
+var feeds = map[string]feedParams{
+	"en": {"World Cup 2026", "en-US", "US", "US:en"},
+	"ro": {"Cupa Mondială 2026", "ro", "RO", "RO:ro"},
+	"de": {"Fußball WM 2026", "de", "DE", "DE:de"},
+	"fr": {"Coupe du Monde 2026", "fr", "FR", "FR:fr"},
+	"es": {"Mundial 2026", "es", "ES", "ES:es"},
+	"it": {"Mondiali 2026", "it", "IT", "IT:it"},
+	"nl": {"WK voetbal 2026", "nl", "NL", "NL:nl"},
+	"pl": {"Mistrzostwa Świata 2026", "pl", "PL", "PL:pl"},
+	"cs": {"Mistrovství světa 2026", "cs", "CZ", "CZ:cs"},
+}
+
+// feedURL builds the Google News RSS search URL for a language (falls back to en).
+func feedURL(lang string) string {
+	fp, ok := feeds[strings.ToLower(strings.TrimSpace(lang))]
+	if !ok {
+		fp = feeds["en"]
+	}
+	return fmt.Sprintf(
+		"https://news.google.com/rss/search?q=%s&hl=%s&gl=%s&ceid=%s",
+		url.QueryEscape(fp.query), fp.hl, fp.gl, url.QueryEscape(fp.ceid),
+	)
+}
+
+// Client fetches and parses localized Google News RSS feeds, cached per language.
 type Client struct {
-	httpClient *http.Client
-	feedURL    string
-	limit      int
+	httpClient  *http.Client
+	limit       int
+	cacheTTL    time.Duration
+	overrideURL string // test seam: when set, used instead of the localized URL
+
+	mu    sync.Mutex
+	cache map[string]cachedFeed
+}
+
+type cachedFeed struct {
+	articles []news.Article
+	at       time.Time
 }
 
 // New builds a Client. A nil httpClient gets a default one; limit <= 0 disables
 // the cap.
-func New(feedURL string, limit int, httpClient *http.Client) *Client {
+func New(limit int, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Client{httpClient: httpClient, feedURL: feedURL, limit: limit}
+	return &Client{
+		httpClient: httpClient,
+		limit:      limit,
+		cacheTTL:   5 * time.Minute,
+		cache:      make(map[string]cachedFeed),
+	}
 }
 
 type rssFeed struct {
@@ -50,9 +100,27 @@ type rssItem struct {
 	} `xml:"source"`
 }
 
-// Latest fetches the feed and maps it to domain articles.
-func (c *Client) Latest(ctx context.Context) ([]news.Article, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.feedURL, nil)
+// Latest fetches the localized feed for lang and maps it to domain articles.
+// Results are cached per language; stale cache is served if a refresh fails.
+func (c *Client) Latest(ctx context.Context, lang string) ([]news.Article, error) {
+	key := strings.ToLower(strings.TrimSpace(lang))
+	if _, ok := feeds[key]; !ok {
+		key = "en"
+	}
+
+	c.mu.Lock()
+	cached, has := c.cache[key]
+	fresh := has && time.Since(cached.at) < c.cacheTTL
+	c.mu.Unlock()
+	if fresh {
+		return cached.articles, nil
+	}
+
+	target := feedURL(key)
+	if c.overrideURL != "" {
+		target = c.overrideURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -60,16 +128,25 @@ func (c *Client) Latest(ctx context.Context) ([]news.Article, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if has {
+			return cached.articles, nil // serve stale on failure
+		}
 		return nil, fmt.Errorf("call provider: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if has {
+			return cached.articles, nil
+		}
 		return nil, fmt.Errorf("provider returned status %d", resp.StatusCode)
 	}
 
 	var feed rssFeed
 	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
+		if has {
+			return cached.articles, nil
+		}
 		return nil, fmt.Errorf("decode feed: %w", err)
 	}
 
@@ -77,11 +154,14 @@ func (c *Client) Latest(ctx context.Context) ([]news.Article, error) {
 	if c.limit > 0 && len(items) > c.limit {
 		items = items[:c.limit]
 	}
-
 	articles := make([]news.Article, 0, len(items))
 	for _, it := range items {
 		articles = append(articles, it.toArticle())
 	}
+
+	c.mu.Lock()
+	c.cache[key] = cachedFeed{articles: articles, at: time.Now()}
+	c.mu.Unlock()
 	return articles, nil
 }
 

@@ -1,0 +1,23 @@
+[Unit]
+Description=Oddvice API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oddvice
+Group=oddvice
+WorkingDirectory=/opt/oddvice-api
+# The binary loads .env from the working directory (and next to itself).
+ExecStart=/opt/oddvice-api/bin/server
+Restart=always
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

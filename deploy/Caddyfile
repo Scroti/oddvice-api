@@ -1,0 +1,6 @@
+# Replace api.yourdomain.com with your subdomain.
+# Point its DNS A record at the VPS IP first; Caddy then gets HTTPS automatically.
+api.yourdomain.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

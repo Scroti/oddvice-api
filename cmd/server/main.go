@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,7 +24,15 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	// Load .env from the working directory, and also from next to the binary
+	// and its parent (so `bin\server.exe` finds `api\.env` regardless of cwd).
+	// loadDotenv never overrides already-set vars, so the first hit per key wins.
 	loadDotenv(".env")
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		loadDotenv(filepath.Join(exeDir, ".env"))
+		loadDotenv(filepath.Join(filepath.Dir(exeDir), ".env"))
+	}
 	cfg := config.Load()
 
 	srv := &http.Server{

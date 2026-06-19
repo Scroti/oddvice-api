@@ -35,8 +35,9 @@ func TestLatest_ParsesAndMaps(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, 0, srv.Client())
-	articles, err := c.Latest(context.Background())
+	c := New(0, srv.Client())
+	c.overrideURL = srv.URL
+	articles, err := c.Latest(context.Background(), "en")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,8 +69,9 @@ func TestLatest_RespectsLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, 1, srv.Client())
-	articles, err := c.Latest(context.Background())
+	c := New(1, srv.Client())
+	c.overrideURL = srv.URL
+	articles, err := c.Latest(context.Background(), "en")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
