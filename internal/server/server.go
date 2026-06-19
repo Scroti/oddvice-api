@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/oddvice/api/internal/commentary"
 	"github.com/oddvice/api/internal/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/oddvice/api/internal/football/footballdata"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
+	"github.com/oddvice/api/internal/players"
 	"github.com/oddvice/api/internal/push"
 	"github.com/oddvice/api/internal/teams"
 	"github.com/oddvice/api/internal/teams/apifootball"
@@ -91,6 +93,54 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 	}
 	teamsSvc := teams.NewService(teamsProvider, commentary.New(commentaryStore))
 	teams.NewHandler(teamsSvc, logger).Register(mux)
+
+	// Player index (Postgres) — name search for the profile-avatar picker.
+	// Ingested ONCE from api-football squads (+ daily refresh), then searched
+	// from the DB, so user searches make zero api-football calls.
+	playersStore, perr := players.NewStore(ctx, cfg.Database.URL)
+	if perr != nil {
+		logger.Error("players store init failed; player search disabled", "error", perr)
+		playersStore = nil
+	}
+	players.NewHandler(players.NewService(playersStore), logger).Register(mux)
+	if playersStore != nil {
+		n, _ := playersStore.Count(ctx)
+		logger.Info("player search: postgres", "players", n)
+		fetch := func(fctx context.Context) ([]players.Player, error) {
+			teamList, err := teamsProvider.Teams(fctx)
+			if err != nil {
+				return nil, err
+			}
+			var all []players.Player
+			for _, t := range teamList {
+				select {
+				case <-fctx.Done():
+					return all, fctx.Err()
+				default:
+				}
+				squad, err := teamsProvider.Squad(fctx, t.ID)
+				if err != nil {
+					logger.Warn("player index: squad fetch failed", "team", t.Name, "error", err)
+					continue
+				}
+				for _, p := range squad {
+					all = append(all, players.Player{
+						ID:          p.ID,
+						Name:        p.Name,
+						Photo:       p.Photo,
+						Team:        t.Name,
+						Position:    p.Position,
+						Nationality: t.Name,
+					})
+				}
+				time.Sleep(150 * time.Millisecond) // politeness between provider calls
+			}
+			return all, nil
+		}
+		go players.NewIngester(fetch, playersStore, logger).Run(ctx)
+	} else {
+		logger.Info("player search: disabled (no DATABASE_URL)")
+	}
 
 	// Tips (mock now, Claude/DB-backed later) — built over the football service.
 	tipsService := tips.NewService(tips.NewMockProvider(), footballService)

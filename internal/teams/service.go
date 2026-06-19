@@ -47,6 +47,11 @@ func (s *Service) Live(ctx context.Context) ([]LiveMatch, error) {
 	return s.provider.LiveMatches(ctx)
 }
 
+// SearchPlayers finds players by name for the profile-avatar picker.
+func (s *Service) SearchPlayers(ctx context.Context, q string) ([]PlayerHit, error) {
+	return s.provider.SearchPlayers(ctx, q)
+}
+
 // Events returns the match timeline for a fixture (names + date).
 func (s *Service) Events(ctx context.Context, home, away, date string) ([]Event, bool, error) {
 	return s.provider.Events(ctx, home, away, date)

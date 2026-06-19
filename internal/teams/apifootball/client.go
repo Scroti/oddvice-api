@@ -42,12 +42,21 @@ type Client struct {
 	live          []teams.LiveMatch
 	liveAt        time.Time
 	events        map[string]cachedEvents
-	fixtureIDs    map[string]int // "home|away|date" -> fixture id (stable)
+	fixtureIDs    map[string]int            // "home|away|date" -> fixture id (stable)
+	players       map[string]cachedPlayers  // normalized query -> player search results
 	cooldownUntil time.Time
 }
 
 // liveTTL keeps live data fresh without hammering the API (it updates ~every 15s).
 const liveTTL = 20 * time.Second
+
+// playerSearchTTL caches a player-name search result (used by the avatar picker).
+const playerSearchTTL = 30 * time.Minute
+
+type cachedPlayers struct {
+	players []teams.PlayerHit
+	at      time.Time
+}
 
 type cachedEvents struct {
 	events []teams.Event
@@ -92,6 +101,7 @@ func New(baseURL, apiKey string, league, season int, cacheTTL time.Duration, htt
 		stats:      make(map[string]cachedStats),
 		events:     make(map[string]cachedEvents),
 		fixtureIDs: make(map[string]int),
+		players:    make(map[string]cachedPlayers),
 	}
 }
 
@@ -650,6 +660,104 @@ func (c *Client) EventsByFixture(ctx context.Context, fid int) ([]teams.Event, b
 	return out, found, nil
 }
 
+type playerProfilesResponse struct {
+	Response []struct {
+		Player struct {
+			ID          int    `json:"id"`
+			Name        string `json:"name"`
+			Firstname   string `json:"firstname"`
+			Lastname    string `json:"lastname"`
+			Photo       string `json:"photo"`
+			Nationality string `json:"nationality"`
+		} `json:"player"`
+	} `json:"response"`
+}
+
+// SearchPlayers finds players by (partial) name. It tries /players/profiles
+// first, then falls back to the competition /players search. Always graceful:
+// returns an empty slice (never an error) for short/empty queries or on any
+// provider failure, so the handler can serve HTTP 200.
+func (c *Client) SearchPlayers(ctx context.Context, q string) ([]teams.PlayerHit, error) {
+	q = strings.TrimSpace(q)
+	if len([]rune(q)) < 3 {
+		return []teams.PlayerHit{}, nil
+	}
+	key := strings.ToLower(q)
+
+	c.mu.Lock()
+	if cp, ok := c.players[key]; ok && time.Since(cp.at) < playerSearchTTL {
+		out := cp.players
+		c.mu.Unlock()
+		return out, nil
+	}
+	c.mu.Unlock()
+
+	hits := c.fetchPlayerProfiles(ctx, q)
+	if len(hits) == 0 {
+		hits = c.fetchPlayersFallback(ctx, q)
+	}
+	if hits == nil {
+		hits = []teams.PlayerHit{}
+	}
+
+	// Only cache real results so a transient throttle doesn't stick as "none".
+	if len(hits) > 0 {
+		c.mu.Lock()
+		c.players[key] = cachedPlayers{players: hits, at: time.Now()}
+		c.mu.Unlock()
+	}
+	return hits, nil
+}
+
+func (c *Client) fetchPlayerProfiles(ctx context.Context, q string) []teams.PlayerHit {
+	endpoint := fmt.Sprintf("%s/players/profiles?search=%s", c.baseURL, url.QueryEscape(q))
+	var payload playerProfilesResponse
+	if err := c.get(ctx, endpoint, &payload); err != nil {
+		return nil
+	}
+	return mapPlayerHits(payload)
+}
+
+func (c *Client) fetchPlayersFallback(ctx context.Context, q string) []teams.PlayerHit {
+	endpoint := fmt.Sprintf("%s/players?search=%s&league=%d&season=%d",
+		c.baseURL, url.QueryEscape(q), c.league, c.season)
+	var payload playerProfilesResponse
+	if err := c.get(ctx, endpoint, &payload); err != nil {
+		return nil
+	}
+	return mapPlayerHits(payload)
+}
+
+func mapPlayerHits(p playerProfilesResponse) []teams.PlayerHit {
+	out := make([]teams.PlayerHit, 0, len(p.Response))
+	seen := make(map[int]struct{})
+	for _, r := range p.Response {
+		pl := r.Player
+		if pl.ID == 0 {
+			continue
+		}
+		if _, dup := seen[pl.ID]; dup {
+			continue
+		}
+		seen[pl.ID] = struct{}{}
+		name := strings.TrimSpace(pl.Name)
+		if name == "" {
+			name = strings.TrimSpace(pl.Firstname + " " + pl.Lastname)
+		}
+		photo := pl.Photo
+		if photo == "" {
+			photo = playerPhoto(pl.ID)
+		}
+		out = append(out, teams.PlayerHit{
+			ID:          pl.ID,
+			Name:        name,
+			Photo:       photo,
+			Nationality: pl.Nationality,
+		})
+	}
+	return out
+}
+
 func nameMatches(a, b string) bool {
 	return teams.NameMatches(a, b)
 }
@@ -693,6 +801,60 @@ func deref(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+// ---- Squads (build the searchable player index) ----------------------------
+
+// SquadPlayer is one player in a team's current squad, used ONCE by the player
+// index ingester (not per user search). Photo falls back to the headshot URL.
+type SquadPlayer struct {
+	ID       int
+	Name     string
+	Photo    string
+	Position string
+}
+
+type squadsResponse struct {
+	Response []struct {
+		Team struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"team"`
+		Players []struct {
+			ID       int    `json:"id"`
+			Name     string `json:"name"`
+			Number   int    `json:"number"`
+			Position string `json:"position"`
+			Photo    string `json:"photo"`
+		} `json:"players"`
+	} `json:"response"`
+}
+
+// Squad returns a team's current squad in a single api-football call. The player
+// index is ingested from these once (and refreshed daily), so user-facing name
+// searches hit Postgres and make zero api-football calls.
+func (c *Client) Squad(ctx context.Context, teamID int) ([]SquadPlayer, error) {
+	endpoint := fmt.Sprintf("%s/players/squads?team=%d", c.baseURL, teamID)
+	var payload squadsResponse
+	if err := c.get(ctx, endpoint, &payload); err != nil {
+		return nil, err
+	}
+	if len(payload.Response) == 0 {
+		return nil, nil
+	}
+	in := payload.Response[0].Players
+	out := make([]SquadPlayer, 0, len(in))
+	for _, p := range in {
+		if p.ID == 0 {
+			continue
+		}
+		photo := p.Photo
+		if photo == "" {
+			photo = playerPhoto(p.ID)
+		}
+		out = append(out, SquadPlayer{ID: p.ID, Name: p.Name, Photo: photo, Position: p.Position})
+	}
+	return out, nil
 }
 
 // ---- HTTP ------------------------------------------------------------------

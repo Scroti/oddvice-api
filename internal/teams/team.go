@@ -103,6 +103,15 @@ type Event struct {
 	Commentary string `json:"commentary,omitempty"` // AI one-liner (Claude), when available
 }
 
+// PlayerHit is a player matched by a name search, used to let a user pick a
+// footballer photo as their profile avatar.
+type PlayerHit struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Photo       string `json:"photo,omitempty"`
+	Nationality string `json:"nationality,omitempty"`
+}
+
 // Provider fetches team data from an external source (api-football.com).
 type Provider interface {
 	// Teams lists every team in the configured competition/season.
@@ -122,4 +131,6 @@ type Provider interface {
 	Events(ctx context.Context, home, away, date string) ([]Event, bool, error)
 	// EventsByFixture returns the timeline for a known api-football fixture id.
 	EventsByFixture(ctx context.Context, fixtureID int) ([]Event, bool, error)
+	// SearchPlayers finds players by (partial) name for the avatar picker.
+	SearchPlayers(ctx context.Context, q string) ([]PlayerHit, error)
 }
