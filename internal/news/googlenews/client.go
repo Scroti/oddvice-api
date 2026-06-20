@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -62,12 +63,27 @@ type Client struct {
 
 	mu    sync.Mutex
 	cache map[string]cachedFeed
+
+	// Per-article-URL enrichment (og:image / og:description), shared across
+	// languages and filled in the background so the response never blocks.
+	enrichMu       sync.Mutex
+	enrichCache    map[string]enrichEntry
+	enrichInflight map[string]bool
 }
 
 type cachedFeed struct {
 	articles []news.Article
 	at       time.Time
 }
+
+type enrichEntry struct {
+	image string
+	desc  string
+	at    time.Time
+}
+
+// enrichTTL is how long a fetched (or failed) enrichment is trusted.
+const enrichTTL = 12 * time.Hour
 
 // New builds a Client. A nil httpClient gets a default one; limit <= 0 disables
 // the cap.
@@ -76,10 +92,12 @@ func New(limit int, httpClient *http.Client) *Client {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Client{
-		httpClient: httpClient,
-		limit:      limit,
-		cacheTTL:   5 * time.Minute,
-		cache:      make(map[string]cachedFeed),
+		httpClient:     httpClient,
+		limit:          limit,
+		cacheTTL:       5 * time.Minute,
+		cache:          make(map[string]cachedFeed),
+		enrichCache:    make(map[string]enrichEntry),
+		enrichInflight: make(map[string]bool),
 	}
 }
 
@@ -113,7 +131,8 @@ func (c *Client) Latest(ctx context.Context, lang string) ([]news.Article, error
 	fresh := has && time.Since(cached.at) < c.cacheTTL
 	c.mu.Unlock()
 	if fresh {
-		return cached.articles, nil
+		c.ensureEnriched(cached.articles)
+		return c.withEnrich(cached.articles), nil
 	}
 
 	target := feedURL(key)
@@ -162,7 +181,118 @@ func (c *Client) Latest(ctx context.Context, lang string) ([]news.Article, error
 	c.mu.Lock()
 	c.cache[key] = cachedFeed{articles: articles, at: time.Now()}
 	c.mu.Unlock()
-	return articles, nil
+
+	c.ensureEnriched(articles)
+	return c.withEnrich(articles), nil
+}
+
+// withEnrich returns a copy of articles with any cached og:image / og:description
+// applied. Cheap (map lookups); safe to call on every request.
+func (c *Client) withEnrich(articles []news.Article) []news.Article {
+	out := make([]news.Article, len(articles))
+	copy(out, articles)
+	c.enrichMu.Lock()
+	for i := range out {
+		if e, ok := c.enrichCache[out[i].Link]; ok {
+			if e.image != "" {
+				out[i].Image = e.image
+			}
+			if len(e.desc) > len(out[i].Summary) {
+				out[i].Summary = e.desc
+			}
+		}
+	}
+	c.enrichMu.Unlock()
+	return out
+}
+
+// ensureEnriched fetches og:image / og:description for any article URL we haven't
+// resolved (or whose entry is stale), in the background, concurrency-limited. It
+// never blocks the caller; results land in enrichCache for the next request.
+func (c *Client) ensureEnriched(articles []news.Article) {
+	var todo []string
+	c.enrichMu.Lock()
+	for _, a := range articles {
+		if a.Link == "" || c.enrichInflight[a.Link] {
+			continue
+		}
+		if e, ok := c.enrichCache[a.Link]; ok && time.Since(e.at) < enrichTTL {
+			continue
+		}
+		c.enrichInflight[a.Link] = true
+		todo = append(todo, a.Link)
+	}
+	c.enrichMu.Unlock()
+	if len(todo) == 0 {
+		return
+	}
+
+	go func() {
+		sem := make(chan struct{}, 6)
+		var wg sync.WaitGroup
+		for _, link := range todo {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(link string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				img, desc := c.fetchMeta(link)
+				c.enrichMu.Lock()
+				c.enrichCache[link] = enrichEntry{image: img, desc: desc, at: time.Now()}
+				delete(c.enrichInflight, link)
+				c.enrichMu.Unlock()
+			}(link)
+		}
+		wg.Wait()
+	}()
+}
+
+var (
+	metaTagRe = regexp.MustCompile(`(?i)<meta[^>]+>`)
+	contentRe = regexp.MustCompile(`(?i)content\s*=\s*["']([^"']+)["']`)
+)
+
+// fetchMeta best-effort fetches an article page and extracts og:image (or
+// twitter:image) and og:description. Returns ("","") on any failure/timeout.
+func (c *Client) fetchMeta(link string) (image, desc string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return "", ""
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OddviceBot/1.0; +https://oddvice.app)")
+	req.Header.Set("Accept", "text/html")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", ""
+	}
+	page := string(body)
+	for _, tag := range metaTagRe.FindAllString(page, -1) {
+		low := strings.ToLower(tag)
+		m := contentRe.FindStringSubmatch(tag)
+		if m == nil {
+			continue
+		}
+		val := html.UnescapeString(strings.TrimSpace(m[1]))
+		if image == "" && (strings.Contains(low, "og:image") || strings.Contains(low, "twitter:image")) {
+			if strings.HasPrefix(val, "http") {
+				image = val
+			}
+		}
+		if desc == "" && strings.Contains(low, "og:description") {
+			desc = val
+		}
+	}
+	return image, desc
 }
 
 func (it rssItem) toArticle() news.Article {

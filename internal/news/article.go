@@ -11,5 +11,6 @@ type Article struct {
 	Link        string     `json:"link"`   // URL of the original article (the source site)
 	Source      string     `json:"source"` // publisher name, e.g. "Digi Sport"
 	Summary     string     `json:"summary"`
+	Image       string     `json:"image"` // lead image (og:image), best-effort; "" when unknown
 	PublishedAt *time.Time `json:"publishedAt"`
 }
