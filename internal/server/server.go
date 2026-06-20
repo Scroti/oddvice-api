@@ -11,6 +11,7 @@ import (
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/footballdata"
+	"github.com/oddvice/api/internal/lineupwarm"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
 	"github.com/oddvice/api/internal/players"
@@ -93,6 +94,13 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 	}
 	teamsSvc := teams.NewService(teamsProvider, commentary.New(commentaryStore))
 	teams.NewHandler(teamsSvc, logger).Register(mux)
+
+	// Lineup warmer — pre-fetch confirmed lineups around kickoff into the
+	// provider cache so clients get them without polling. api-football only.
+	if cfg.Teams.APIKey != "" {
+		go lineupwarm.New(footballService, teamsSvc).Run(ctx)
+		logger.Info("lineup warmer started")
+	}
 
 	// Player index (Postgres) — name search for the profile-avatar picker.
 	// Ingested ONCE from api-football squads (+ daily refresh), then searched

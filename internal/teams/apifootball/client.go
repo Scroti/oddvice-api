@@ -50,6 +50,12 @@ type Client struct {
 // liveTTL keeps live data fresh without hammering the API (it updates ~every 15s).
 const liveTTL = 20 * time.Second
 
+// lineupRetryTTL caps how long a "no lineup yet" result is cached, so the open
+// match screen and the lineup warmer pick up lineups the moment they're
+// published (~20-40 min pre-kickoff) instead of being stuck on the long
+// not-found cache. Found lineups keep the normal long TTL.
+const lineupRetryTTL = 5 * time.Minute
+
 // playerSearchTTL caches a player-name search result (used by the avatar picker).
 const playerSearchTTL = 30 * time.Minute
 
@@ -328,9 +334,15 @@ func (c *Client) Lineups(ctx context.Context, home, away, date string) (teams.Ma
 	key := strings.ToLower(home + "|" + away + "|" + date)
 
 	c.mu.Lock()
-	if cl, ok := c.lineups[key]; ok && time.Since(cl.at) < c.cacheTTL {
-		c.mu.Unlock()
-		return cl.ml, cl.found, nil
+	if cl, ok := c.lineups[key]; ok {
+		ttl := c.cacheTTL
+		if !cl.found {
+			ttl = lineupRetryTTL
+		}
+		if time.Since(cl.at) < ttl {
+			c.mu.Unlock()
+			return cl.ml, cl.found, nil
+		}
 	}
 	c.mu.Unlock()
 
