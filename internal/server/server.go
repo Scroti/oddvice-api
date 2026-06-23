@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/oddvice/api/internal/aitips"
 	"github.com/oddvice/api/internal/commentary"
 	"github.com/oddvice/api/internal/commentarywarm"
 	"github.com/oddvice/api/internal/config"
@@ -159,9 +160,51 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 		logger.Info("player search: disabled (no DATABASE_URL)")
 	}
 
-	// Tips (mock now, Claude/DB-backed later) — built over the football service.
-	tipsService := tips.NewService(tips.NewMockProvider(), footballService)
-	tips.NewHandler(tipsService, logger).Register(mux)
+	// Tips — Claude-generated and self-improving (graded vs results, learns from
+	// its own misses via the prompt). Falls back to the mock per match until a
+	// real bundle is generated.
+	aiTipsStore, aerr := aitips.NewStore(ctx, cfg.Database.URL)
+	if aerr != nil {
+		logger.Error("ai tips store init failed; using mock tips", "error", aerr)
+		aiTipsStore = nil
+	}
+	tipsProvider := aitips.NewProvider(ctx, aiTipsStore, tips.NewMockProvider())
+	tips.NewHandler(tips.NewService(tipsProvider, footballService), logger).Register(mux)
+	if aiTipsStore != nil {
+		upcomingFn := func(c context.Context) ([]aitips.MatchCtx, error) {
+			ms, err := footballService.Upcoming(c, 0)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]aitips.MatchCtx, 0, len(ms))
+			for _, m := range ms {
+				k := time.Time{}
+				if m.KickoffAt != nil {
+					k = *m.KickoffAt
+				}
+				out = append(out, aitips.MatchCtx{ID: m.ID, Home: m.HomeTeam, Away: m.AwayTeam, League: m.League, Kickoff: k})
+			}
+			return out, nil
+		}
+		resultsFn := func(c context.Context) (map[string][2]int, error) {
+			ms, err := footballService.Results(c, 300)
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[string][2]int, len(ms))
+			for _, m := range ms {
+				if m.HomeScore == nil || m.AwayScore == nil {
+					continue
+				}
+				out[m.ID] = [2]int{*m.HomeScore, *m.AwayScore}
+			}
+			return out, nil
+		}
+		go aitips.NewWarmer(aiTipsStore, upcomingFn, resultsFn, logger).Run(ctx)
+		logger.Info("ai tips: enabled (claude, self-improving)")
+	} else {
+		logger.Info("ai tips: disabled (no DATABASE_URL) — using mock")
+	}
 
 	// News
 	newsClient := &http.Client{Timeout: cfg.News.Timeout}
