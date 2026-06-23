@@ -19,6 +19,13 @@ type Config struct {
 	News           News        // news feed provider settings
 	Push           Push        // Web Push / VAPID settings
 	Database       Database    // Postgres connection (commentary cache)
+	Highlights     Highlights  // YouTube highlights search
+}
+
+// Highlights configures the YouTube Data API used to find match highlights.
+// Empty APIKey disables the feature (handler returns an empty list).
+type Highlights struct {
+	APIKey string // YOUTUBE_API_KEY (server-side only)
 }
 
 // Database holds the Postgres connection settings. When URL is empty the API
@@ -106,6 +113,9 @@ func Load() Config {
 		},
 		Database: Database{
 			URL: getenv("DATABASE_URL", ""),
+		},
+		Highlights: Highlights{
+			APIKey: getenv("YOUTUBE_API_KEY", ""),
 		},
 	}
 }

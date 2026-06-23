@@ -13,6 +13,7 @@ import (
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/footballdata"
 	"github.com/oddvice/api/internal/gamify"
+	"github.com/oddvice/api/internal/highlights"
 	"github.com/oddvice/api/internal/lineupwarm"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
@@ -166,6 +167,14 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 	newsClient := &http.Client{Timeout: cfg.News.Timeout}
 	newsProvider := googlenews.New(cfg.News.Limit, newsClient)
 	news.NewHandler(news.NewService(newsProvider), logger).Register(mux)
+
+	// Highlights — YouTube search for match highlights (server-side key).
+	highlights.NewHandler(highlights.New(cfg.Highlights.APIKey, nil)).Register(mux)
+	if cfg.Highlights.APIKey != "" {
+		logger.Info("highlights: youtube search enabled")
+	} else {
+		logger.Info("highlights: disabled (no YOUTUBE_API_KEY)")
+	}
 
 	// Gamify — prediction game: users predict winners → points/streak/leaderboard,
 	// and the crowd's picks form a per-match poll. Graded against finished results
