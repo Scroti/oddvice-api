@@ -264,13 +264,19 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 		pushStore, _ = push.NewStore("/tmp/push-subs-fallback.json")
 	}
 	pushSender := push.NewSender(cfg.Push.Public, cfg.Push.Private, cfg.Push.Subject)
-	push.NewHandler(pushStore, pushSender, cfg.Push.Public).Register(mux)
+	// Native (Expo) push tokens — stored in Postgres when available.
+	expoStore, eerr := push.NewExpoStore(ctx, cfg.Database.URL)
+	if eerr != nil {
+		logger.Error("expo push store init failed; native push disabled", "error", eerr)
+		expoStore = nil
+	}
+	push.NewHandler(pushStore, pushSender, cfg.Push.Public, expoStore).Register(mux)
 
-	if cfg.Push.Configured() {
-		watcher := push.NewWatcher(teamsSvc, pushStore, pushSender)
+	if cfg.Push.Configured() || expoStore != nil {
+		watcher := push.NewWatcher(teamsSvc, pushStore, pushSender, expoStore)
 		go watcher.Run(ctx)
-		logger.Info("push watcher started")
+		logger.Info("push watcher started", "expo", expoStore != nil, "webpush", cfg.Push.Configured())
 	} else {
-		logger.Info("VAPID not configured; push watcher disabled")
+		logger.Info("push watcher disabled (no VAPID, no DATABASE_URL)")
 	}
 }

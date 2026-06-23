@@ -18,16 +18,18 @@ type score struct {
 	away int
 }
 
-// Watcher polls live matches and sends goal notifications to all subscribers.
+// Watcher polls live matches and sends goal notifications to all subscribers
+// (Web Push) and native devices (Expo push).
 type Watcher struct {
 	svc    *teams.Service
 	store  *Store
 	sender *Sender
+	expo   *ExpoStore
 }
 
-// NewWatcher constructs a Watcher.
-func NewWatcher(svc *teams.Service, store *Store, sender *Sender) *Watcher {
-	return &Watcher{svc: svc, store: store, sender: sender}
+// NewWatcher constructs a Watcher. expo may be nil (native push then skipped).
+func NewWatcher(svc *teams.Service, store *Store, sender *Sender, expo *ExpoStore) *Watcher {
+	return &Watcher{svc: svc, store: store, sender: sender, expo: expo}
 }
 
 // Run starts the polling loop. It blocks until ctx is cancelled.
@@ -111,6 +113,13 @@ func (w *Watcher) notify(ctx context.Context, m teams.LiveMatch, side string, _ 
 	subs := w.store.All()
 	for _, sub := range subs {
 		w.sender.Send(ctx, w.store, sub, payload)
+	}
+
+	// Native devices via Expo push.
+	if w.expo != nil {
+		if tokens, err := w.expo.All(ctx); err == nil {
+			SendExpo(ctx, nil, tokens, title, body, "/")
+		}
 	}
 	slog.Info("push: goal notification sent", "fixture", m.FixtureID, "title", title, "subscribers", len(subs))
 }
