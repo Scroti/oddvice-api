@@ -18,6 +18,7 @@ import (
 	"github.com/oddvice/api/internal/news/googlenews"
 	"github.com/oddvice/api/internal/players"
 	"github.com/oddvice/api/internal/push"
+	"github.com/oddvice/api/internal/recap"
 	"github.com/oddvice/api/internal/teams"
 	"github.com/oddvice/api/internal/teams/apifootball"
 	"github.com/oddvice/api/internal/tips"
@@ -201,6 +202,42 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 		logger.Info("gamify: predictions enabled (postgres)")
 	} else {
 		logger.Info("gamify: disabled (no DATABASE_URL)")
+	}
+
+	// Post-match AI recap — Claude generates a short recap per finished match
+	// (all languages), persisted in Postgres and served to the feed.
+	recapStore, rerr := recap.NewStore(ctx, cfg.Database.URL)
+	if rerr != nil {
+		logger.Error("recap store init failed; recaps disabled", "error", rerr)
+		recapStore = nil
+	}
+	recap.NewHandler(recapStore).Register(mux)
+	if recapStore != nil {
+		recapResults := func(c context.Context) ([]recap.Finished, error) {
+			ms, err := footballService.Results(c, 100)
+			if err != nil {
+				return nil, err
+			}
+			var out []recap.Finished
+			for _, m := range ms {
+				if m.HomeScore == nil || m.AwayScore == nil {
+					continue
+				}
+				out = append(out, recap.Finished{
+					ID:        m.ID,
+					Home:      m.HomeTeam,
+					Away:      m.AwayTeam,
+					HomeScore: *m.HomeScore,
+					AwayScore: *m.AwayScore,
+					League:    m.League,
+				})
+			}
+			return out, nil
+		}
+		go recap.NewWarmer(recapStore, recapResults, logger).Run(ctx)
+		logger.Info("recap warmer started")
+	} else {
+		logger.Info("recap: disabled (no DATABASE_URL)")
 	}
 
 	// Push — Web Push goal notifications. Routes are always registered so the
