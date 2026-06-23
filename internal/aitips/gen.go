@@ -93,8 +93,8 @@ func (w *Warmer) grade(ctx context.Context) {
 		}
 		hits, total := 0, 0
 		for _, t := range b.Tips {
-			if t.GradeKey == "" {
-				continue
+			if !gradeable(t.GradeKey) {
+				continue // ungradeable market → don't count it for/against the record
 			}
 			total++
 			if gradeHit(t.GradeKey, sc[0], sc[1]) {
@@ -146,6 +146,20 @@ func (w *Warmer) generate(ctx context.Context) {
 			done++
 			w.log.Info("aitips: generated", "match", m.ID, "record", fmt.Sprintf("%d/%d", rec.Hits, rec.Total))
 		}
+	}
+}
+
+// gradeable reports whether a gradeKey is one we can score from the result.
+func gradeable(key string) bool {
+	switch key {
+	case "1x2_home", "1x2_draw", "1x2_away",
+		"dc_1x", "dc_x2", "dc_12",
+		"btts_yes", "btts_no",
+		"over25", "under25",
+		"home_and_btts", "away_and_btts":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -205,6 +219,8 @@ Every tip MUST use one of these gradeKey values, with matching human market/sele
 - btts_yes / btts_no              → market "BTTS", selection "Both teams to score: Yes/No"
 - over25 / under25               → market "Over/Under 2.5", selection "Over 2.5 goals" / "Under 2.5 goals"
 - home_and_btts / away_and_btts  → market "Result & BTTS", selection "%s win & BTTS" / "%s win & BTTS"
+
+Use ONLY these gradeKey values with their matching selection text. Do NOT invent other markets (no "Under 3.5", no "anytime/first scorer", no corners/cards). Every tip's selection MUST correspond exactly to its gradeKey.
 
 YOUR TRACK RECORD: %d/%d graded picks correct (%d%%).
 Recent MISSES — learn from these, do NOT repeat overconfident picks of the same kind:
