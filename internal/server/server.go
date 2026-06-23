@@ -229,6 +229,8 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 					Away:      m.AwayTeam,
 					HomeScore: *m.HomeScore,
 					AwayScore: *m.AwayScore,
+					HomeBadge: m.HomeBadge,
+					AwayBadge: m.AwayBadge,
 					League:    m.League,
 				})
 			}

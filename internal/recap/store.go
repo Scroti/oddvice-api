@@ -18,6 +18,8 @@ type Recap struct {
 	Away      string `json:"away"`
 	HomeScore int    `json:"homeScore"`
 	AwayScore int    `json:"awayScore"`
+	HomeBadge string `json:"homeBadge"`
+	AwayBadge string `json:"awayBadge"`
 	League    string `json:"league"`
 	Body      string `json:"body"`
 }
@@ -51,7 +53,7 @@ func NewStore(ctx context.Context, url string) (*Store, error) {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS recaps (
+	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS recaps (
 		match_id   text NOT NULL,
 		lang       text NOT NULL,
 		home       text NOT NULL,
@@ -62,7 +64,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		body       text NOT NULL,
 		created_at timestamptz NOT NULL DEFAULT now(),
 		PRIMARY KEY (match_id, lang)
-	)`)
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS home_badge text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS away_badge text NOT NULL DEFAULT ''`)
 	return err
 }
 
@@ -72,10 +80,10 @@ func (s *Store) Put(ctx context.Context, r Recap, lang string) error {
 		return nil
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO recaps (match_id, lang, home, away, home_score, away_score, league, body)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		 ON CONFLICT (match_id, lang) DO UPDATE SET body=EXCLUDED.body`,
-		r.MatchID, lang, r.Home, r.Away, r.HomeScore, r.AwayScore, r.League, r.Body)
+		`INSERT INTO recaps (match_id, lang, home, away, home_score, away_score, league, body, home_badge, away_badge)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		 ON CONFLICT (match_id, lang) DO UPDATE SET body=EXCLUDED.body, home_badge=EXCLUDED.home_badge, away_badge=EXCLUDED.away_badge`,
+		r.MatchID, lang, r.Home, r.Away, r.HomeScore, r.AwayScore, r.League, r.Body, r.HomeBadge, r.AwayBadge)
 	return err
 }
 
@@ -86,7 +94,7 @@ func (s *Store) Recent(ctx context.Context, lang string, limit int) ([]Recap, er
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT match_id, home, away, home_score, away_score, league, body
+		`SELECT match_id, home, away, home_score, away_score, league, body, home_badge, away_badge
 		 FROM recaps WHERE lang=$1 ORDER BY created_at DESC LIMIT $2`, lang, limit)
 	if err != nil {
 		return out, err
@@ -94,7 +102,7 @@ func (s *Store) Recent(ctx context.Context, lang string, limit int) ([]Recap, er
 	defer rows.Close()
 	for rows.Next() {
 		var r Recap
-		if err := rows.Scan(&r.MatchID, &r.Home, &r.Away, &r.HomeScore, &r.AwayScore, &r.League, &r.Body); err != nil {
+		if err := rows.Scan(&r.MatchID, &r.Home, &r.Away, &r.HomeScore, &r.AwayScore, &r.League, &r.Body, &r.HomeBadge, &r.AwayBadge); err != nil {
 			return out, err
 		}
 		out = append(out, r)

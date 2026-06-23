@@ -25,6 +25,8 @@ type Finished struct {
 	Away      string
 	HomeScore int
 	AwayScore int
+	HomeBadge string
+	AwayBadge string
 	League    string
 }
 
@@ -108,7 +110,9 @@ func (w *Warmer) warm(ctx context.Context) {
 			}
 			_ = w.store.Put(ctx, Recap{
 				MatchID: f.ID, Home: f.Home, Away: f.Away,
-				HomeScore: f.HomeScore, AwayScore: f.AwayScore, League: f.League, Body: body,
+				HomeScore: f.HomeScore, AwayScore: f.AwayScore,
+				HomeBadge: f.HomeBadge, AwayBadge: f.AwayBadge,
+				League: f.League, Body: body,
 			}, lang)
 		}
 		done++
