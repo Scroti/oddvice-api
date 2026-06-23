@@ -12,6 +12,7 @@ import (
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/footballdata"
+	"github.com/oddvice/api/internal/gamify"
 	"github.com/oddvice/api/internal/lineupwarm"
 	"github.com/oddvice/api/internal/news"
 	"github.com/oddvice/api/internal/news/googlenews"
@@ -164,6 +165,43 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 	newsClient := &http.Client{Timeout: cfg.News.Timeout}
 	newsProvider := googlenews.New(cfg.News.Limit, newsClient)
 	news.NewHandler(news.NewService(newsProvider), logger).Register(mux)
+
+	// Gamify — prediction game: users predict winners → points/streak/leaderboard,
+	// and the crowd's picks form a per-match poll. Graded against finished results
+	// in the background. Postgres-backed; degrades to 503 without DATABASE_URL.
+	gamifyStore, gerr := gamify.NewStore(ctx, cfg.Database.URL)
+	if gerr != nil {
+		logger.Error("gamify store init failed; predictions disabled", "error", gerr)
+		gamifyStore = nil
+	}
+	gamify.NewHandler(gamifyStore).Register(mux)
+	if gamifyStore != nil {
+		results := func(c context.Context) (map[string]string, error) {
+			ms, err := footballService.Results(c, 300)
+			if err != nil {
+				return nil, err
+			}
+			winners := make(map[string]string, len(ms))
+			for _, m := range ms {
+				if m.HomeScore == nil || m.AwayScore == nil {
+					continue
+				}
+				switch {
+				case *m.HomeScore > *m.AwayScore:
+					winners[m.ID] = "home"
+				case *m.AwayScore > *m.HomeScore:
+					winners[m.ID] = "away"
+				default:
+					winners[m.ID] = "draw"
+				}
+			}
+			return winners, nil
+		}
+		go gamify.NewGrader(gamifyStore, results, logger).Run(ctx)
+		logger.Info("gamify: predictions enabled (postgres)")
+	} else {
+		logger.Info("gamify: disabled (no DATABASE_URL)")
+	}
 
 	// Push — Web Push goal notifications. Routes are always registered so the
 	// web app can discover the public key; subscribe returns 503 when unconfigured.
