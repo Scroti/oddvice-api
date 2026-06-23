@@ -131,6 +131,18 @@ func (s *Store) HaveMatchIDs(ctx context.Context, ids []string) (map[string]bool
 	return have, rows.Err()
 }
 
+// CountTodayMatches returns how many distinct matches were recapped today
+// (server local date), used to cap the number of recaps per day.
+func (s *Store) CountTodayMatches(ctx context.Context) (int, error) {
+	if s == nil || s.pool == nil {
+		return 0, nil
+	}
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(DISTINCT match_id) FROM recaps WHERE created_at::date = current_date`).Scan(&n)
+	return n, err
+}
+
 // Close releases the pool.
 func (s *Store) Close() {
 	if s != nil && s.pool != nil {

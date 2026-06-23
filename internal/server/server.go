@@ -223,6 +223,10 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 				if m.HomeScore == nil || m.AwayScore == nil {
 					continue
 				}
+				var kickoff time.Time
+				if m.KickoffAt != nil {
+					kickoff = *m.KickoffAt
+				}
 				out = append(out, recap.Finished{
 					ID:        m.ID,
 					Home:      m.HomeTeam,
@@ -232,6 +236,7 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 					HomeBadge: m.HomeBadge,
 					AwayBadge: m.AwayBadge,
 					League:    m.League,
+					KickoffAt: kickoff,
 				})
 			}
 			return out, nil

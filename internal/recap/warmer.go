@@ -28,7 +28,16 @@ type Finished struct {
 	HomeBadge string
 	AwayBadge string
 	League    string
+	KickoffAt time.Time
 }
+
+// settleDelay is how long after kickoff a match is considered "finished + ~30
+// min". A match runs ~2h wall-clock (halves + half-time + stoppage), so we wait
+// ~2h30 before writing the recap, per the "30 min after full time" rule.
+const settleDelay = 2*time.Hour + 30*time.Minute
+
+// dailyCap is the most recaps we generate per calendar day.
+const dailyCap = 4
 
 // ResultsFn returns the currently-finished matches.
 type ResultsFn func(ctx context.Context) ([]Finished, error)
@@ -75,6 +84,16 @@ func (w *Warmer) Run(ctx context.Context) {
 }
 
 func (w *Warmer) warm(ctx context.Context) {
+	// Respect the daily cap.
+	today, err := w.store.CountTodayMatches(ctx)
+	if err != nil {
+		w.log.Warn("recap warmer: daily-count failed", "error", err)
+		return
+	}
+	if today >= dailyCap {
+		return
+	}
+
 	finished, err := w.results(ctx)
 	if err != nil {
 		w.log.Warn("recap warmer: results fetch failed", "error", err)
@@ -92,12 +111,17 @@ func (w *Warmer) warm(ctx context.Context) {
 		w.log.Warn("recap warmer: have-check failed", "error", err)
 		return
 	}
+	budget := dailyCap - today // how many more we may write today
 	done := 0
 	for _, f := range finished {
-		if done >= w.perCycle {
-			break // cap per cycle to avoid CLI bursts
+		if done >= budget || done >= w.perCycle {
+			break
 		}
 		if have[f.ID] {
+			continue
+		}
+		// Only ~30 min after full time (kickoff + ~2h30).
+		if f.KickoffAt.IsZero() || time.Since(f.KickoffAt) < settleDelay {
 			continue
 		}
 		perLang, err := w.generate(ctx, f)
