@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oddvice/api/internal/commentary"
+	"github.com/oddvice/api/internal/commentarywarm"
 	"github.com/oddvice/api/internal/config"
 	"github.com/oddvice/api/internal/football"
 	"github.com/oddvice/api/internal/football/footballdata"
@@ -100,6 +101,11 @@ func registerFeatures(ctx context.Context, mux *http.ServeMux, cfg config.Config
 	if cfg.Teams.APIKey != "" {
 		go lineupwarm.New(footballService, teamsSvc).Run(ctx)
 		logger.Info("lineup warmer started")
+
+		// Commentary warmer — pre-generate AI commentary for live fixtures so
+		// it's cached before a client opens the match (no slow "raw text first").
+		go commentarywarm.New(teamsSvc).Run(ctx)
+		logger.Info("commentary warmer started")
 	}
 
 	// Player index (Postgres) — name search for the profile-avatar picker.
