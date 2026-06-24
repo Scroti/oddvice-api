@@ -44,13 +44,13 @@ type ResultsFn func(ctx context.Context) ([]Finished, error)
 
 // Warmer generates + persists recaps for finished matches not yet recapped.
 type Warmer struct {
-	store   *Store
-	results ResultsFn
-	bin     string
-	model   string
-	timeout time.Duration
+	store    *Store
+	results  ResultsFn
+	bin      string
+	model    string
+	timeout  time.Duration
 	perCycle int
-	log     *slog.Logger
+	log      *slog.Logger
 }
 
 // NewWarmer builds a Warmer. CLAUDE_BIN / CLAUDE_MODEL override the CLI.
@@ -136,7 +136,7 @@ func (w *Warmer) warm(ctx context.Context) {
 				MatchID: f.ID, Home: f.Home, Away: f.Away,
 				HomeScore: f.HomeScore, AwayScore: f.AwayScore,
 				HomeBadge: f.HomeBadge, AwayBadge: f.AwayBadge,
-				League: f.League, Body: body,
+				League: f.League, Body: body, Kickoff: f.KickoffAt,
 			}, lang)
 		}
 		done++

@@ -22,6 +22,17 @@ type Recap struct {
 	AwayBadge string `json:"awayBadge"`
 	League    string `json:"league"`
 	Body      string `json:"body"`
+	// Kickoff is the match start time; used to order recaps by when the match was
+	// actually played (most recent first). Not serialized.
+	Kickoff time.Time `json:"-"`
+}
+
+// nullTime maps a zero time.Time to SQL NULL so legacy/unknown rows sort last.
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // Store persists recaps in Postgres.
@@ -70,7 +81,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS home_badge text NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS away_badge text NOT NULL DEFAULT ''`)
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS away_badge text NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `ALTER TABLE recaps ADD COLUMN IF NOT EXISTS kickoff timestamptz`)
 	return err
 }
 
@@ -80,10 +94,10 @@ func (s *Store) Put(ctx context.Context, r Recap, lang string) error {
 		return nil
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO recaps (match_id, lang, home, away, home_score, away_score, league, body, home_badge, away_badge)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		 ON CONFLICT (match_id, lang) DO UPDATE SET body=EXCLUDED.body, home_badge=EXCLUDED.home_badge, away_badge=EXCLUDED.away_badge`,
-		r.MatchID, lang, r.Home, r.Away, r.HomeScore, r.AwayScore, r.League, r.Body, r.HomeBadge, r.AwayBadge)
+		`INSERT INTO recaps (match_id, lang, home, away, home_score, away_score, league, body, home_badge, away_badge, kickoff)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		 ON CONFLICT (match_id, lang) DO UPDATE SET body=EXCLUDED.body, home_badge=EXCLUDED.home_badge, away_badge=EXCLUDED.away_badge, kickoff=EXCLUDED.kickoff`,
+		r.MatchID, lang, r.Home, r.Away, r.HomeScore, r.AwayScore, r.League, r.Body, r.HomeBadge, r.AwayBadge, nullTime(r.Kickoff))
 	return err
 }
 
@@ -95,7 +109,7 @@ func (s *Store) Recent(ctx context.Context, lang string, limit int) ([]Recap, er
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT match_id, home, away, home_score, away_score, league, body, home_badge, away_badge
-		 FROM recaps WHERE lang=$1 ORDER BY created_at DESC LIMIT $2`, lang, limit)
+		 FROM recaps WHERE lang=$1 ORDER BY kickoff DESC NULLS LAST, created_at DESC LIMIT $2`, lang, limit)
 	if err != nil {
 		return out, err
 	}
