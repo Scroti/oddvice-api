@@ -6,7 +6,6 @@ package googlenews
 import (
 	"context"
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -249,48 +248,22 @@ func (c *Client) ensureEnriched(articles []news.Article) {
 }
 
 var (
-	metaTagRe    = regexp.MustCompile(`(?i)<meta[^>]+>`)
-	contentRe    = regexp.MustCompile(`(?i)content\s*=\s*["']([^"']+)["']`)
-	urlInBytesRe = regexp.MustCompile(`https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+`)
+	metaTagRe = regexp.MustCompile(`(?i)<meta[^>]+>`)
+	contentRe = regexp.MustCompile(`(?i)content\s*=\s*["']([^"']+)["']`)
 )
-
-// resolveArticleURL turns a Google News RSS redirect link into the publisher's
-// real article URL by decoding the base64 token embedded in the path. Returns
-// the original link when it isn't a Google News URL or can't be decoded.
-func resolveArticleURL(link string) string {
-	if !strings.Contains(link, "news.google.") {
-		return link
-	}
-	i := strings.Index(link, "/articles/")
-	if i < 0 {
-		return link
-	}
-	tok := link[i+len("/articles/"):]
-	if j := strings.IndexAny(tok, "?&/"); j >= 0 {
-		tok = tok[:j]
-	}
-	dec, err := base64.RawURLEncoding.DecodeString(tok)
-	if err != nil {
-		if dec, err = base64.URLEncoding.DecodeString(tok); err != nil {
-			return link
-		}
-	}
-	if m := urlInBytesRe.Find(dec); m != nil {
-		u := string(m)
-		// Drop a trailing length-suffix garbled char run if any non-host noise.
-		if strings.HasPrefix(u, "http") && !strings.Contains(u, "news.google.") {
-			return u
-		}
-	}
-	return link
-}
 
 // fetchMeta best-effort fetches an article page and extracts og:image (or
 // twitter:image) and og:description. Returns ("","") on any failure/timeout.
 func (c *Client) fetchMeta(link string) (image, desc string) {
-	// Resolve the Google News redirect to the publisher's real article URL,
-	// which is where the og:image / og:description actually live.
-	link = resolveArticleURL(link)
+	// Google News article pages expose an og:image (Google's thumbnail) and
+	// og:description; bypass the consent interstitial with ucbcb=1.
+	if strings.Contains(link, "news.google.") && !strings.Contains(link, "ucbcb=") {
+		if strings.Contains(link, "?") {
+			link += "&ucbcb=1"
+		} else {
+			link += "?ucbcb=1"
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
