@@ -48,12 +48,16 @@ func New(key string, hc *http.Client) *Client {
 // Enabled reports whether a key is configured.
 func (c *Client) Enabled() bool { return c != nil && c.key != "" }
 
-// Search returns up to ~6 embeddable highlight videos for the fixture.
-func (c *Client) Search(ctx context.Context, home, away string) ([]Video, error) {
+// Search returns up to ~6 embeddable highlight videos for the fixture. When
+// shorts is true it biases toward vertical YouTube Shorts (short clips).
+func (c *Client) Search(ctx context.Context, home, away string, shorts bool) ([]Video, error) {
 	if !c.Enabled() {
 		return []Video{}, nil
 	}
 	cacheKey := strings.ToLower(home + "|" + away)
+	if shorts {
+		cacheKey += "|shorts"
+	}
 	c.mu.Lock()
 	if e, ok := c.cache[cacheKey]; ok && time.Since(e.at) < cacheTTL {
 		v := e.vids
@@ -63,6 +67,9 @@ func (c *Client) Search(ctx context.Context, home, away string) ([]Video, error)
 	c.mu.Unlock()
 
 	q := fmt.Sprintf("%s vs %s World Cup 2026 highlights", home, away)
+	if shorts {
+		q += " #shorts"
+	}
 	params := url.Values{}
 	params.Set("part", "snippet")
 	params.Set("q", q)
@@ -71,6 +78,9 @@ func (c *Client) Search(ctx context.Context, home, away string) ([]Video, error)
 	params.Set("order", "relevance")
 	params.Set("videoEmbeddable", "true")
 	params.Set("safeSearch", "none")
+	if shorts {
+		params.Set("videoDuration", "short")
+	}
 	params.Set("key", c.key)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,

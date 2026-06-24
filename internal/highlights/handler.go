@@ -29,7 +29,8 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "home and away are required")
 		return
 	}
-	vids, err := h.client.Search(r.Context(), home, away)
+	shorts := r.URL.Query().Get("shorts") == "1" || r.URL.Query().Get("shorts") == "true"
+	vids, err := h.client.Search(r.Context(), home, away, shorts)
 	if err != nil {
 		// degrade gracefully — empty list, client falls back to the search link
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"count": 0, "videos": []Video{}})
