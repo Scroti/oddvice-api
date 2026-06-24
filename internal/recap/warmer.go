@@ -36,8 +36,10 @@ type Finished struct {
 // ~2h30 before writing the recap, per the "30 min after full time" rule.
 const settleDelay = 2*time.Hour + 30*time.Minute
 
-// dailyCap is the most recaps we generate per calendar day.
-const dailyCap = 4
+// dailyCap is a safety backstop on recaps per calendar day. Set generously so
+// every finished match gets an analysis (World Cup matchdays peak at ~6 games),
+// while still bounding runaway CLI calls if the results feed misbehaves.
+const dailyCap = 20
 
 // ResultsFn returns the currently-finished matches.
 type ResultsFn func(ctx context.Context) ([]Finished, error)
@@ -63,7 +65,7 @@ func NewWarmer(store *Store, results ResultsFn, log *slog.Logger) *Warmer {
 	if model == "" {
 		model = "haiku"
 	}
-	return &Warmer{store: store, results: results, bin: bin, model: model, timeout: 90 * time.Second, perCycle: 4, log: log}
+	return &Warmer{store: store, results: results, bin: bin, model: model, timeout: 90 * time.Second, perCycle: 6, log: log}
 }
 
 const warmInterval = 5 * time.Minute
